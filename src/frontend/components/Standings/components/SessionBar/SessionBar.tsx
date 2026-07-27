@@ -1,11 +1,20 @@
 import {
   useGeneralSettings,
   useTelemetryValue,
+  useTelemetryValues,
   useCurrentSessionType,
   useThrottledWeather,
   useTotalRaceValue,
   useTrackDisplayName,
+  useLastLapTopSpeed,
+  useSessionBestTopSpeed,
+  useSessionDrivers,
+  useDriverCarIdx,
 } from '@irdashies/context';
+import { CarManufacturer } from '../CarManufacturer/CarManufacturer';
+import { CAR_ID_TO_CAR_MANUFACTURER } from '../CarManufacturer/carManufacturerMapping';
+import { formatFuel } from '../../../FuelCalculator/fuelCalculations';
+import { formatTime } from '@irdashies/utils/time';
 import {
   useDriverIncidents,
   useSessionLapCount,
@@ -18,11 +27,16 @@ import {
   ClockIcon,
   ClockUserIcon,
   CloudRainIcon,
+  FlagIcon,
+  GasPumpIcon,
+  GaugeIcon,
   RoadHorizonIcon,
   ThermometerIcon,
+  TimerIcon,
   TireIcon,
   WavesIcon,
 } from '@phosphor-icons/react';
+import { RacingHelmetIcon } from '../../../shared/RacingHelmetIcon';
 import { SessionBarConfig } from '@irdashies/types';
 import { useSessionCurrentTime } from '../../hooks/useSessionCurrentTime';
 import { SessionState } from '@irdashies/types';
@@ -151,6 +165,20 @@ export const SessionBar = ({
   const { totalRaceLaps, isFixedLapRace, totalRaceTime, adjustedRaceTime } =
     useTotalRaceValue();
   const trackDisplayName = useTrackDisplayName();
+  const fuelLevelLiters = useTelemetryValue('FuelLevel');
+  const lastLapTime = useTelemetryValue('LapLastLapTime');
+  const bestLapTime = useTelemetryValue('LapBestLapTime');
+  const allBestLapTimes = useTelemetryValues('CarIdxBestLapTime');
+  const lastLapTopSpeedMs = useLastLapTopSpeed();
+  const sessionBestTopSpeedMs = useSessionBestTopSpeed();
+  const drivers = useSessionDrivers();
+  const playerCarIdx = useDriverCarIdx();
+  const carIdxPositions = useTelemetryValues('CarIdxPosition');
+  const carIdxClassPositions = useTelemetryValues('CarIdxClassPosition');
+  const sessionBestLap =
+    allBestLapTimes && allBestLapTimes.some((t) => t > 0)
+      ? Math.min(...allBestLapTimes.filter((t) => t > 0))
+      : undefined;
 
   // Define all possible items with their render functions
   const itemDefinitions = {
@@ -425,6 +453,146 @@ export const SessionBar = ({
             {speedPosition === 'left' && speedEl}
             {arrowEl}
             {speedPosition === 'right' && speedEl}
+          </div>
+        );
+      },
+    },
+    fuelLevel: {
+      enabled: effectiveBarSettings?.fuelLevel?.enabled ?? false,
+      render: () => {
+        if (fuelLevelLiters === undefined) return null;
+        const units = displayUnits === 1 ? 'L' : 'gal';
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <GasPumpIcon />
+            <span>{formatFuel(fuelLevelLiters, units, 1)}</span>
+          </div>
+        );
+      },
+    },
+    lastLap: {
+      enabled: effectiveBarSettings?.lastLap?.enabled ?? false,
+      render: () => {
+        const t = lastLapTime ?? 0;
+        const pb = bestLapTime ?? 0;
+        const color =
+          t > 0 && sessionBestLap !== undefined && t <= sessionBestLap
+            ? 'text-purple-400'
+            : t > 0 && pb > 0 && t <= pb
+              ? 'text-green-400'
+              : '';
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <TimerIcon />
+            <span className={color}>
+              {t > 0 ? formatTime(t, 'mixed') : '—'}
+            </span>
+          </div>
+        );
+      },
+    },
+    bestLap: {
+      enabled: effectiveBarSettings?.bestLap?.enabled ?? false,
+      render: () => {
+        const pb = bestLapTime ?? 0;
+        const color =
+          pb > 0 && sessionBestLap !== undefined && pb <= sessionBestLap
+            ? 'text-purple-400'
+            : '';
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <FlagIcon />
+            <span className={color}>
+              {pb > 0 ? formatTime(pb, 'mixed') : '—'}
+            </span>
+          </div>
+        );
+      },
+    },
+    manufacturerPosition: {
+      enabled: effectiveBarSettings?.manufacturerPosition?.enabled ?? false,
+      render: () => {
+        if (playerCarIdx === undefined || !drivers) return null;
+        const playerDriver = drivers.find((d) => d.CarIdx === playerCarIdx);
+        if (!playerDriver?.CarID) return null;
+        const playerMfr =
+          CAR_ID_TO_CAR_MANUFACTURER[playerDriver.CarID]?.manufacturer;
+        if (!playerMfr || playerMfr === 'unknown') return null;
+        const mfrSettings = effectiveBarSettings?.manufacturerPosition;
+        if (mfrSettings?.hideIfSingleMake) {
+          const allMfrs = new Set(
+            drivers.map(
+              (d) =>
+                CAR_ID_TO_CAR_MANUFACTURER[d.CarID]?.manufacturer ?? 'unknown'
+            )
+          );
+          if (allMfrs.size <= 1) return null;
+        }
+        const sameMfr = drivers.filter(
+          (d) =>
+            CAR_ID_TO_CAR_MANUFACTURER[d.CarID]?.manufacturer === playerMfr
+        );
+        const total = sameMfr.length;
+        if (mfrSettings?.hideIfSingleDriver && total <= 1) return null;
+        const sorted = sameMfr
+          .map((d) => ({
+            carIdx: d.CarIdx,
+            pos: carIdxPositions?.[d.CarIdx] ?? 0,
+          }))
+          .filter((d) => d.pos > 0)
+          .sort((a, b) => a.pos - b.pos);
+        const rank = sorted.findIndex((d) => d.carIdx === playerCarIdx) + 1;
+        if (rank === 0) return null;
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <CarManufacturer carId={playerDriver.CarID} />
+            <span>
+              {rank}/{total}
+            </span>
+          </div>
+        );
+      },
+    },
+    classRank: {
+      enabled: effectiveBarSettings?.classRank?.enabled ?? false,
+      render: () => {
+        if (playerCarIdx === undefined || !drivers) return null;
+        const playerDriver = drivers.find((d) => d.CarIdx === playerCarIdx);
+        if (!playerDriver?.CarClassID) return null;
+        const total = drivers.filter(
+          (d) => d.CarClassID === playerDriver.CarClassID
+        ).length;
+        const rank = carIdxClassPositions?.[playerCarIdx] ?? 0;
+        if (rank <= 0) return null;
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <RacingHelmetIcon size={14} />
+            <span>
+              {rank}/{total}
+            </span>
+          </div>
+        );
+      },
+    },
+    topSpeed: {
+      enabled: effectiveBarSettings?.topSpeed?.enabled ?? false,
+      render: () => {
+        const isMetric = displayUnits === 1;
+        const factor = isMetric ? 3.6 : 2.23694;
+        const unit = isMetric ? 'km/h' : 'mph';
+        const last =
+          lastLapTopSpeedMs !== null
+            ? `${(lastLapTopSpeedMs * factor).toFixed(0)} ${unit}`
+            : '—';
+        const best =
+          sessionBestTopSpeedMs !== null
+            ? (sessionBestTopSpeedMs * factor).toFixed(0)
+            : null;
+        return (
+          <div className="flex justify-center gap-1 items-center tabular-nums">
+            <GaugeIcon />
+            <span>{last}</span>
+            {best && <span className="text-green-400">({best})</span>}
           </div>
         );
       },
