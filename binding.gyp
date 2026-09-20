@@ -84,6 +84,31 @@
             ],
         },
         {
+            "target_name": "lmu_probe",
+            "type": "none",
+            "sources": [],
+            "conditions": [
+                [
+                    "OS=='win'",
+                    {
+                        "type": "executable",
+                        "sources": [
+                            "src/app/irsdk/native/lmu/lmu_probe_main.cpp",
+                            "src/app/irsdk/native/lmu/lmu_struct.h",
+                        ],
+                        "msvs_settings": {
+                            "VCCLCompilerTool": {
+                                # Static CRT (/MT): the probe is meant to be
+                                # copied to a sim machine that may not have the
+                                # Visual C++ redistributable installed.
+                                "RuntimeLibrary": 0
+                            }
+                        }
+                    },
+                ]
+            ],
+        },
+        {
             "target_name": "irsdk_replay",
             "type": "none",
             "sources": [],
