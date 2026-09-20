@@ -24,6 +24,7 @@ private:
     Napi::Value IsRunning(const Napi::CallbackInfo &info);
     Napi::Value Read(const Napi::CallbackInfo &info);
     Napi::Value ReadSession(const Napi::CallbackInfo &info);
+    Napi::Value FrameClock(const Napi::CallbackInfo &info);
 
     int GetClassId(const char *className) const;
     const LMUVehicleTelemetry *GetPlayerTelemetry() const;
@@ -39,10 +40,15 @@ private:
     const LMUObjectOut *_mapped;
     LMUObjectOut _snapshot;
     bool _hasSnapshot;
-    // Update counters of the snapshot currently held, so an unchanged frame can
-    // be recognised from two 4-byte reads instead of a 325 KB copy.
+    // SME_* values of the snapshot currently held. Exposed to JS for diagnosis
+    // only: measured against a live LMU 14150, these never change, so they
+    // cannot be used to detect a new frame.
     uint32_t _scoringUpdate;
     uint32_t _telemetryUpdate;
+    // mElapsedTime of the snapshot currently held. This one was measured to
+    // advance at 100 Hz, and is what makes eliding the copy safe. Negative when
+    // there is no player car and so no clock to compare.
+    double _frameClock;
     mutable std::map<std::string, int> _classIds;
 };
 

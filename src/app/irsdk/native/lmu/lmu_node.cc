@@ -7,6 +7,27 @@ namespace
 {
 const wchar_t *LMU_SHARED_MEMORY_FILE = L"LMU_Data";
 
+/**
+ * The player's telemetry clock, or -1 when there is no player car.
+ *
+ * mElapsedTime advances once per published physics frame -- measured at 100 Hz
+ * against LMU 14150 -- which makes it the signal for "is this frame new". It is
+ * eight bytes at a fixed offset, so it can be read straight off the mapped block
+ * without copying the 325 KB payload. A torn read can only produce a value that
+ * compares unequal, which errs towards copying; it cannot produce a false
+ * "unchanged".
+ */
+double LmuFrameClock(const LMUObjectOut &data)
+{
+  const auto &telem = data.telemetry;
+  if (!telem.playerHasVehicle)
+    return -1.0;
+  const uint8_t idx = telem.playerVehicleIdx;
+  if (idx >= LMU_MAX_VEHICLES)
+    return -1.0;
+  return telem.telemInfo[idx].mElapsedTime;
+}
+
 std::string ReadCString(const char *ptr, size_t maxLen)
 {
   size_t len = 0;
@@ -38,6 +59,7 @@ Napi::Object LmuSdkNode::Init(Napi::Env env, Napi::Object exports)
     InstanceMethod("isRunning", &LmuSdkNode::IsRunning),
     InstanceMethod("read", &LmuSdkNode::Read),
     InstanceMethod("readSession", &LmuSdkNode::ReadSession),
+    InstanceMethod("frameClock", &LmuSdkNode::FrameClock),
   });
 
   Napi::FunctionReference *constructor = new Napi::FunctionReference();
@@ -57,6 +79,7 @@ LmuSdkNode::LmuSdkNode(const Napi::CallbackInfo &info)
   , _hasSnapshot(false)
   , _scoringUpdate(0)
   , _telemetryUpdate(0)
+  , _frameClock(-1.0)
 {
 }
 
@@ -105,6 +128,7 @@ void LmuSdkNode::Unmap()
   _hasSnapshot = false;
   _scoringUpdate = 0;
   _telemetryUpdate = 0;
+  _frameClock = -1.0;
   if (_view != NULL)
   {
     UnmapViewOfFile(_view);
@@ -145,12 +169,15 @@ bool LmuSdkNode::CaptureSnapshot()
   if (_mapped == NULL)
     return false;
 
-  // No copy elision here yet. Gating the copy on SME_UPDATE_TELEMETRY looked
-  // free, but a probe run against a live LMU 14150 showed that counter not
-  // moving once in five seconds, which would have frozen every overlay after
-  // the first frame. The counters are exposed to JS for diagnosis; until a
-  // cheap field is *measured* to advance per frame, the copy stays
-  // unconditional. lmu_probe.exe reports which fields actually tick.
+  // Skip the copy when the sim has not published since the held snapshot. The
+  // signal is mElapsedTime, measured at 100 Hz by lmu_probe; SME_UPDATE_TELEMETRY
+  // looked like the obvious choice but never moves, and gating on it froze every
+  // overlay after one frame. A negative clock means there is no player car and
+  // so nothing to compare, in which case the copy always happens.
+  const double liveClock = LmuFrameClock(*_mapped);
+  if (_hasSnapshot && liveClock >= 0.0 && liveClock == _frameClock)
+    return true;
+
   for (int attempt = 0; attempt < 4; ++attempt)
   {
     const LMUSnapshotState before = {
@@ -183,6 +210,9 @@ bool LmuSdkNode::CaptureSnapshot()
     _hasSnapshot = true;
     _scoringUpdate = snapshot.scoringUpdate;
     _telemetryUpdate = snapshot.telemetryUpdate;
+    // Taken from the copy, not from the live block, which may already have moved
+    // on -- otherwise the next poll would elide a frame it never captured.
+    _frameClock = LmuFrameClock(_snapshot);
     return true;
   }
 
@@ -368,6 +398,23 @@ void LmuSdkNode::FillVehicleArrays(Napi::Object &out) const
   out.Set("vehPosZ", posZ);
   out.Set("vehOriX", oriX);
   out.Set("vehOriZ", oriZ);
+}
+
+/**
+ * The live frame clock, without copying or building anything.
+ *
+ * Lets a caller polling faster than the sim publishes decide whether to call
+ * read() at all: read() builds a JS object carrying roughly forty per-car
+ * arrays, and doing that for a frame already delivered is the dominant cost of
+ * a wasted poll. Returns -1 when nothing is mapped or there is no player car,
+ * which the caller must treat as "read anyway", not as "no new frame".
+ */
+Napi::Value LmuSdkNode::FrameClock(const Napi::CallbackInfo &info)
+{
+  auto env = info.Env();
+  if (_mapped == NULL)
+    return Napi::Number::New(env, -1.0);
+  return Napi::Number::New(env, LmuFrameClock(*_mapped));
 }
 
 Napi::Value LmuSdkNode::Read(const Napi::CallbackInfo &info)

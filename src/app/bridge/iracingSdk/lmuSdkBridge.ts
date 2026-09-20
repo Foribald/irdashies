@@ -27,10 +27,32 @@ import {
 import { app } from 'electron';
 import path from 'node:path';
 
-// Poll cadence for the LMU shared-memory frame. LMU writes at the sim's
-// physics rate (~60 Hz); a fixed 16 ms poll keeps latency low without burning
-// CPU waiting between frames.
-const TELEMETRY_POLL_INTERVAL = 16;
+/**
+ * Poll cadence for the LMU shared-memory frame.
+ *
+ * LMU publishes telemetry at **100 Hz** (measured: 999 frames in 10 s, median
+ * gap 9.92 ms) -- not the ~60 Hz this once assumed. The old 16 ms was close to
+ * the worst value available on Windows: the timer tick is ~15.6 ms, so a 16 ms
+ * request cannot be met by the next tick and waits for the second one. Measured
+ * in the Electron main process, `setTimeout(16)` actually delivered a 30.7 ms
+ * median -- 37 Hz against a 100 Hz writer, dropping ~60% of frames, which is
+ * what made the trace plots jump.
+ *
+ * 8 ms rounds to a single tick (15.5 ms measured, 64 Hz). That is the ceiling
+ * for a JS timer here; asking for 4 ms measured the same, and reaching 100 Hz
+ * would need a native capture thread. Wasted polls are cheap because
+ * `sdk.frameClock()` gates the work below.
+ */
+const TELEMETRY_POLL_INTERVAL = 8;
+
+/**
+ * How long the frame clock may stand still before a full read happens anyway.
+ *
+ * Skipping work while the clock is unchanged also skips the running-state
+ * check, so a stalled clock (sim paused, or gone) must not be able to suppress
+ * disconnect detection indefinitely.
+ */
+const FRAME_STALL_RECHECK_MS = 250;
 // Session snapshots are rebuilt from shared memory on demand; 2 Hz is plenty
 // for driver-grid changes and mirrors the iRacing bridge's session poll rate.
 const SESSION_POLL_INTERVAL = 500;
@@ -122,11 +144,44 @@ export async function publishIRacingSDKEvents(
     // measured not to do. Compared with !== rather than >, so a clock that
     // resets when the session restarts still counts as new.
     let lastFrameClock: number | undefined;
+    let lastFullReadTime = Number.NEGATIVE_INFINITY;
 
     while (!shouldStop) {
       const pollStartedAt = performance.now();
       const shouldPollSession =
         pollStartedAt - lastSessionPollTime >= SESSION_POLL_INTERVAL;
+
+      // Polling faster than the sim publishes means most polls carry nothing.
+      // frameClock() is an 8-byte read off the mapped block, where read() copies
+      // 325 KB and builds a JS object of roughly forty per-car arrays, so
+      // checking first is what makes the higher poll rate affordable. A negative
+      // clock means there is no player car and nothing to compare, so read on.
+      const liveClock = sdk.frameClock();
+      const clockStalled =
+        liveClock >= 0 &&
+        lastFrameClock !== undefined &&
+        liveClock === lastFrameClock;
+      if (
+        clockStalled &&
+        !shouldPollSession &&
+        pollStartedAt - lastFullReadTime < FRAME_STALL_RECHECK_MS
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(
+              0,
+              TELEMETRY_POLL_INTERVAL - (performance.now() - pollStartedAt)
+            )
+          )
+        );
+        continue;
+      }
+      // Reached only when a full read is about to happen, so this also paces the
+      // stalled-clock recheck: read now, then skip for up to FRAME_STALL_RECHECK_MS
+      // rather than reading on every poll for as long as the sim stays paused.
+      lastFullReadTime = pollStartedAt;
+
       perfMetrics.markStart('processTelemetry');
       perfMetrics.markStart(
         shouldPollSession ? 'sdkSessionRead' : 'sdkTelemetryRead'
