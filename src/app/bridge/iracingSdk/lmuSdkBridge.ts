@@ -117,10 +117,11 @@ export async function publishIRacingSDKEvents(
     let lastInspectorTelemetryPublishTime = Number.NEGATIVE_INFINITY;
     let lastSessionPollTime = Number.NEGATIVE_INFINITY;
     let wasRunning = false;
-    // The sim's publish counter for the frame last delivered. Compared with
-    // !== rather than >, so a counter that resets when the sim restarts still
-    // counts as new.
-    let lastTelemetryUpdate = -1;
+    // The player's telemetry clock for the frame last delivered. mElapsedTime
+    // advances once per published physics frame, which SME_UPDATE_TELEMETRY was
+    // measured not to do. Compared with !== rather than >, so a clock that
+    // resets when the session restarts still counts as new.
+    let lastFrameClock: number | undefined;
 
     while (!shouldStop) {
       const pollStartedAt = performance.now();
@@ -244,8 +245,15 @@ export async function publishIRacingSDKEvents(
       // rates drift past each other — an object and an IPC hop to tell every
       // widget what it already knows, and a duplicate sample that makes the
       // trace plots hold still and then jump.
-      const isNewTelemetryFrame = raw.telemetryUpdate !== lastTelemetryUpdate;
-      lastTelemetryUpdate = raw.telemetryUpdate;
+      //
+      // Absent when there is no player car (spectating, garage), in which case
+      // there is no clock to compare and every poll is delivered as before.
+      const frameClock = raw.elapsedTime;
+      const isNewTelemetryFrame =
+        typeof frameClock !== 'number' ||
+        !Number.isFinite(frameClock) ||
+        frameClock !== lastFrameClock;
+      lastFrameClock = typeof frameClock === 'number' ? frameClock : undefined;
 
       if (isNewTelemetryFrame) {
         perfMetrics.markStart('lifecycleTelemetry');

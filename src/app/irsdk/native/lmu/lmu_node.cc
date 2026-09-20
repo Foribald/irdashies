@@ -145,17 +145,12 @@ bool LmuSdkNode::CaptureSnapshot()
   if (_mapped == NULL)
     return false;
 
-  // Cheap gate. The sim bumps these counters when it publishes, so two 4-byte
-  // reads answer "is there anything new?" without copying the 325 KB block. The
-  // poll rate can then exceed the publish rate without the copy cost following
-  // it, and the retained snapshot is by definition still current.
-  if (_hasSnapshot &&
-      _mapped->generic.events.SME_UPDATE_SCORING == _scoringUpdate &&
-      _mapped->generic.events.SME_UPDATE_TELEMETRY == _telemetryUpdate)
-  {
-    return true;
-  }
-
+  // No copy elision here yet. Gating the copy on SME_UPDATE_TELEMETRY looked
+  // free, but a probe run against a live LMU 14150 showed that counter not
+  // moving once in five seconds, which would have frozen every overlay after
+  // the first frame. The counters are exposed to JS for diagnosis; until a
+  // cheap field is *measured* to advance per frame, the copy stays
+  // unconditional. lmu_probe.exe reports which fields actually tick.
   for (int attempt = 0; attempt < 4; ++attempt)
   {
     const LMUSnapshotState before = {

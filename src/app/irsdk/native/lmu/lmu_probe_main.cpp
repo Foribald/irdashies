@@ -138,6 +138,26 @@ int wmain(int argc, wchar_t **argv) {
   uint32_t lastScoring = 0;
   bool first = true;
 
+  // Which field actually marks a new frame is the first thing to establish: the
+  // SME_* fields are named like plugin callbacks but may be session-level
+  // markers rather than per-frame counters. Watch every candidate at once so a
+  // single run distinguishes "the sim is idle" from "this signal never ticks".
+  std::vector<double> elapsedArrivals;
+  std::vector<double> currentEtArrivals;
+  elapsedArrivals.reserve(64 * 1024);
+  currentEtArrivals.reserve(64 * 1024);
+  double lastElapsed = -1.0;
+  double lastCurrentEt = -1.0;
+  unsigned long long smeChanges[16] = {};
+  uint32_t smeLast[16] = {};
+  const char *kSmeNames[16] = {
+      "SME_ENTER",          "SME_EXIT",           "SME_STARTUP",
+      "SME_SHUTDOWN",       "SME_LOAD",           "SME_UNLOAD",
+      "SME_START_SESSION",  "SME_END_SESSION",    "SME_ENTER_REALTIME",
+      "SME_EXIT_REALTIME",  "SME_UPDATE_SCORING", "SME_UPDATE_TELEMETRY",
+      "SME_INIT_APPLICATION", "SME_UNINIT_APPLICATION", "SME_SET_ENVIRONMENT",
+      "SME_FFB"};
+
   // Counts sampled whenever they disagree, which is the condition that used to
   // be misread as a torn read and surfaced as a false disconnect.
   long long mismatchPolls = 0;
@@ -173,19 +193,76 @@ int wmain(int argc, wchar_t **argv) {
       scoringArrivals.push_back(elapsed);
       lastScoring = scoringUpdate;
     }
+
+    // The player's own telemetry clock, which advances once per published
+    // physics frame, and the scoring clock, which advances more slowly.
+    const uint8_t playerIdx = lmu->telemetry.playerVehicleIdx;
+    if (lmu->telemetry.playerHasVehicle && playerIdx < LMU_MAX_VEHICLES) {
+      const double elapsedTime = lmu->telemetry.telemInfo[playerIdx].mElapsedTime;
+      if (first || elapsedTime != lastElapsed) {
+        elapsedArrivals.push_back(elapsed);
+        lastElapsed = elapsedTime;
+      }
+    }
+    const double currentEt = lmu->scoring.scoringInfo.mCurrentET;
+    if (first || currentEt != lastCurrentEt) {
+      currentEtArrivals.push_back(elapsed);
+      lastCurrentEt = currentEt;
+    }
+
+    const uint32_t *sme =
+        reinterpret_cast<const uint32_t *>(&lmu->generic.events);
+    for (int i = 0; i < 16; ++i) {
+      if (!first && sme[i] != smeLast[i]) ++smeChanges[i];
+      smeLast[i] = sme[i];
+    }
+
     first = false;
   }
 
   UnmapViewOfFile(view);
   CloseHandle(map);
 
+  // Always report the signal survey, even when nothing moved: "which of these
+  // ticks" is the question, and a run where none tick is itself the answer.
+  std::printf("=== which field marks a new frame (%.0f s, %llu polls) ===\n",
+              seconds, polls);
+  std::printf("%-24s %10s  %s\n", "signal", "changes", "rate");
+  const auto report = [&](const char *name, size_t changes) {
+    const size_t ticks = changes > 0 ? changes - 1 : 0;
+    std::printf("%-24s %10zu  %.1f Hz\n", name, ticks, ticks / seconds);
+  };
+  report("player mElapsedTime", elapsedArrivals.size());
+  report("scoring mCurrentET", currentEtArrivals.size());
+  report("SME_UPDATE_TELEMETRY", telemetryArrivals.size());
+  report("SME_UPDATE_SCORING", scoringArrivals.size());
+
+  std::printf("\n=== all SME_* fields (value, times changed) ===\n");
+  for (int i = 0; i < 16; ++i) {
+    std::printf("%-24s %10u  changed %llu\n", kSmeNames[i], smeLast[i],
+                smeChanges[i]);
+  }
+  std::printf(
+      "\nIf mElapsedTime ticks but the SME_* fields do not, they are session\n"
+      "markers rather than frame counters, and must not be used to detect a\n"
+      "new frame. If nothing ticks at all, the sim was idle -- get on track.\n");
+
+  if (elapsedArrivals.size() >= 3 && telemetryArrivals.size() < 3) {
+    // The interesting case: use the clock that actually moves.
+    telemetryArrivals = elapsedArrivals;
+    std::printf(
+        "\nUsing player mElapsedTime as the frame signal for the figures"
+        " below.\n");
+  }
+
   if (telemetryArrivals.size() < 3) {
     std::printf(
-        "Only %zu telemetry frame(s) in %.0f s.\n"
+        "\nNo usable frame signal: only %zu change(s) in %.0f s.\n"
         "Is the session paused, or the car in a menu or the garage?\n",
         telemetryArrivals.size(), seconds);
     return 4;
   }
+  std::printf("\n");
 
   std::vector<double> gaps;
   gaps.reserve(telemetryArrivals.size());
