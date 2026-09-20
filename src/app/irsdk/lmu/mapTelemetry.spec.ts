@@ -200,11 +200,57 @@ describe('mapLmuTelemetry', () => {
     const t = mapLmuTelemetry(fixture());
     expect(t.CarIdxPosition.value).toEqual([2, 1, 3]);
     expect(t.CarIdxLapDistPct.value).toEqual([0.4, 0.6, 0.2]);
-    expect(t.CarIdxLap.value).toEqual([2, 3, 1]);
+    // iRacing's CarIdxLap is the lap in progress; mTotalLaps is laps completed.
+    expect(t.CarIdxLap.value).toEqual([3, 4, 2]);
+    expect(t.CarIdxLapCompleted.value).toEqual([2, 3, 1]);
     expect(t.CarIdxClass.value).toEqual([0, 0, 1]);
     expect(t.CarIdxBestLapTime.value).toEqual([134.5, 132.8, 137.1]);
     expect(t.CarIdxOnPitRoad.value).toEqual([false, false, true]);
     expect(t.CarIdxTrackSurface.value).toEqual([4, 4, 1]);
+  });
+
+  it('ranks class positions, 1-based, from the same order as the session', () => {
+    // Slots 0 and 1 share class 0 and run P2/P1; slot 2 is alone in class 1.
+    const t = mapLmuTelemetry(fixture());
+    expect(t.CarIdxClassPosition.value).toEqual([2, 1, 1]);
+  });
+
+  it('reports time into the lap, not the whole-lap estimate', () => {
+    // CarIdxEstTime is "how far into the lap this car is" — feeding it the
+    // ~130s lap estimate made every relative delta meaningless.
+    const raw = fixture();
+    const t = mapLmuTelemetry(raw);
+    expect(t.CarIdxEstTime.value).toEqual(Array.from(raw.vehTimeIntoLap));
+  });
+
+  it('falls back when LMU cannot estimate time into the lap', () => {
+    const raw = fixture();
+    raw.vehTimeIntoLap = new Float64Array([-1, 60, 20]);
+    const t = mapLmuTelemetry(raw);
+    // -1 is finite and would sail through as a real value, so slot 0 is
+    // reconstructed from its progress around the lap instead.
+    expect(t.CarIdxEstTime.value[0]).toBeCloseTo(
+      0.4 * raw.vehEstimatedLapTime[0],
+      6
+    );
+    expect(t.CarIdxEstTime.value[1]).toBe(60);
+  });
+
+  it('marks empty slots with the sentinels iRacing uses', () => {
+    // The addon sizes arrays at max(mID)+1, so a sparse grid leaves holes.
+    // Zero-filled they read as a real car in class 0 sitting at position 0.
+    const raw = fixture();
+    raw.vehLapDistPct = new Float64Array([0.4, -1, 0.2]);
+    const t = mapLmuTelemetry(raw);
+    expect(t.CarIdxTrackSurface.value[1]).toBe(-1);
+    expect(t.CarIdxClass.value[1]).toBe(-1);
+    expect(t.CarIdxPosition.value[1]).toBe(0);
+    expect(t.CarIdxClassPosition.value[1]).toBe(0);
+    expect(t.CarIdxLap.value[1]).toBe(-1);
+    expect(t.CarIdxLapCompleted.value[1]).toBe(-1);
+    // The remaining cars still rank against each other.
+    expect(t.CarIdxPosition.value[0]).toBeGreaterThan(0);
+    expect(t.CarIdxPosition.value[2]).toBeGreaterThan(0);
   });
 
   it('clamps LMU lap distance progress for map positioning', () => {

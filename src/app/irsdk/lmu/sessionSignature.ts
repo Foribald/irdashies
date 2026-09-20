@@ -27,6 +27,10 @@ export const lmuSessionSignature = (session: LmuRawSession): string =>
       className: driver.className,
       vehFilename: driver.vehFilename,
       classId: driver.classId,
+      // The running order is part of the session snapshot now, so a change of
+      // position has to invalidate it. Without this an overtake would not
+      // reach the standings until someone's lap time or lap count changed.
+      place: driver.place,
       qualification: driver.qualification,
       bestLapTime: driver.bestLapTime,
       lastLapTime: driver.lastLapTime,

@@ -5,7 +5,15 @@ import type {
   LmuTrackMap,
 } from '@irdashies/types';
 
+import {
+  lmuRankModeFor,
+  lmuSessionType,
+  rankLmuEntries,
+  type LmuRankEntry,
+} from './positions';
+
 type Raw = import('../native/lmu').LmuRawSession;
+type RawVehicle = import('../native/lmu').LmuRawVehicle;
 
 // LMU shared memory has no car numbers or series metadata. Drivers are
 // presented by their slot index; replace CarNumber sourcing if a REST/league
@@ -38,11 +46,18 @@ export function resolveLmuCarId(vehicleModel: string): number {
   );
 }
 
-function sessionType(session: number): string {
-  if (session >= 10) return 'Race';
-  if (session >= 5 && session <= 8) return 'Open Qualify';
-  if (session >= 1) return 'Practice';
-  return 'Offline Testing';
+/** iRacing reports "no time" as -1, not 0. */
+const timeOrUnset = (value: number): number =>
+  Number.isFinite(value) && value > 0 ? value : -1;
+
+/**
+ * finishStatus (mFinishStatus) in the ReasonOut shape iRacing uses.
+ * 0 none / 1 finished are both "Running"; 2 DNF; 3 DQ.
+ */
+function reasonOut(finishStatus: number): { id: number; str: string } {
+  if (finishStatus === 2) return { id: 1, str: 'DNF' };
+  if (finishStatus === 3) return { id: 2, str: 'Disqualified' };
+  return { id: 0, str: 'Running' };
 }
 
 /**
@@ -55,6 +70,29 @@ export function mapLmuSession(
   trackMap?: LmuTrackMap | null
 ): Session {
   const trackLengthM = raw.lapDist;
+
+  /**
+   * LMU has no class relative speed. Rank classes by their estimated lap time
+   * so the faster class scores higher — that is the order groupStandingsByClass
+   * sorts the class blocks by, and with a flat 0 it was arbitrary. Keyed on the
+   * class name: numeric class ids are interned in encounter order by the addon
+   * and are not stable across restarts.
+   */
+  const classBestEstimate = new Map<string, number>();
+  for (const d of raw.drivers) {
+    const estimate = timeOrUnset(d.estimatedLapTime ?? 0);
+    if (estimate < 0) continue;
+    const current = classBestEstimate.get(d.className);
+    if (current === undefined || estimate < current) {
+      classBestEstimate.set(d.className, estimate);
+    }
+  }
+  const classesByPace = [...classBestEstimate.entries()]
+    .sort(([, a], [, b]) => a - b)
+    .map(([name]) => name);
+  const relSpeedByClass = new Map(
+    classesByPace.map((name, index) => [name, classesByPace.length - index])
+  );
 
   const drivers: Driver[] = raw.drivers.map((d) => ({
     CarIdx: d.id,
@@ -78,7 +116,7 @@ export function mapLmuSession(
     CarCfgName: null,
     CarCfgCustomPaintExt: null,
     CarClassShortName: d.className,
-    CarClassRelSpeed: 0,
+    CarClassRelSpeed: relSpeedByClass.get(d.className) ?? 0,
     CarClassLicenseLevel: 0,
     CarClassMaxFuelPct: '',
     CarClassWeightPenalty: '',
@@ -113,36 +151,100 @@ export function mapLmuSession(
 
   const playerDriver = raw.drivers.find((d) => d.isPlayer);
   const playerIdx = playerDriver?.id ?? -1;
-  const currentSessionType = sessionType(raw.session);
+  const currentSessionType = lmuSessionType(raw.session);
 
-  // Qualifying grid: qualification is LMU's quali time; class ranks computed
-  // within each class so the standings fall back to a proper grid.
-  const qualiSorted = [...raw.drivers]
-    .filter((d) => d.qualification > 0)
-    .sort((a, b) => a.qualification - b.qualification);
-  const classRank = new Map<number, number>();
-  const qualiResults: SessionResults[] = qualiSorted.map((d, idx) => {
-    const classKey = d.classId;
-    const classPos = (classRank.get(classKey) ?? 0) + 1;
-    classRank.set(classKey, classPos);
+  const rankEntry = (d: RawVehicle): LmuRankEntry => ({
+    carIdx: d.id,
+    classId: d.classId,
+    place: d.place,
+    bestLapTime: d.bestLapTime,
+    qualification: d.qualification,
+    totalLaps: d.totalLaps,
+    lapDistPct: trackLengthM > 0 ? d.lapDist / trackLengthM : -1,
+  });
+  const rankEntries = raw.drivers.map(rankEntry);
+  const driversByCarIdx = new Map(raw.drivers.map((d) => [d.id, d]));
+
+  /**
+   * The two arrays do not share a convention, which is checked against a real
+   * captured iRacing session (irsdk/node/utils/mock-data/session.json):
+   * ResultsPositions has a 1-based Position and a 0-based ClassPosition, while
+   * QualifyResultsInfo is 0-based in both. Consumers add 1 to ClassPosition.
+   */
+  const resultRow = (
+    d: RawVehicle,
+    position: number,
+    classPosition: number,
+    isRace: boolean
+  ): SessionResults => {
+    const out = reasonOut(d.finishStatus);
     return {
-      Position: idx + 1,
-      ClassPosition: classPos,
+      Position: position,
+      ClassPosition: classPosition,
       CarIdx: d.id,
       Lap: 0,
-      Time: 0,
+      // Race: gap to the leader. Otherwise the best lap, as iRacing reports it.
+      Time: isRace
+        ? Math.max(0, d.timeBehindLeader)
+        : timeOrUnset(d.bestLapTime),
       FastestLap: 0,
-      FastestTime: d.bestLapTime,
-      LastTime: d.lastLapTime,
+      FastestTime: timeOrUnset(d.bestLapTime),
+      LastTime: timeOrUnset(d.lastLapTime),
       LapsLed: 0,
       LapsComplete: d.totalLaps,
       JokerLapsComplete: 0,
       LapsDriven: d.totalLaps,
       Incidents: 0,
-      ReasonOutId: 0,
-      ReasonOutStr: '',
+      ReasonOutId: out.id,
+      ReasonOutStr: out.str,
     };
-  });
+  };
+
+  // The live running order. Without this the Standings table has no row source
+  // at all and silently falls back to the qualifying grid for the whole
+  // session — which is what it used to do.
+  const isRace = currentSessionType === 'Race';
+  const running = rankLmuEntries(
+    rankEntries,
+    lmuRankModeFor(currentSessionType)
+  );
+  const resultsPositions: SessionResults[] = running.order
+    .map((carIdx, index) => {
+      const d = driversByCarIdx.get(carIdx);
+      if (!d) return null;
+      // Position is 1-based here; ClassPosition is not.
+      return resultRow(d, index + 1, running.classPosition[carIdx], isRace);
+    })
+    .filter((row): row is SessionResults => row !== null);
+
+  // Whoever holds the session's best lap, in the shape the Relative reads to
+  // flag it.
+  const fastest = raw.drivers.reduce<RawVehicle | null>((best, d) => {
+    if (!(d.bestLapTime > 0)) return best;
+    return best === null || d.bestLapTime < best.bestLapTime ? d : best;
+  }, null);
+  const fastestLap = fastest
+    ? [
+        {
+          CarIdx: fastest.id,
+          FastestLap: 0,
+          FastestTime: timeOrUnset(fastest.bestLapTime),
+        },
+      ]
+    : [];
+
+  // Qualifying grid. `qualification` is mQualification, an int32 grid POSITION
+  // (lmu_struct.h) rather than a lap time. Cars without one are ranked last
+  // rather than dropped, so they still reach the standings.
+  const qualifying = rankLmuEntries(rankEntries, 'qualifying');
+  const qualiResults: SessionResults[] = qualifying.order
+    .map((carIdx, index) => {
+      const d = driversByCarIdx.get(carIdx);
+      if (!d) return null;
+      // Both are 0-based in QualifyResultsInfo.
+      return resultRow(d, index, qualifying.classPosition[carIdx], false);
+    })
+    .filter((row): row is SessionResults => row !== null);
 
   return {
     WeekendInfo: {
@@ -253,8 +355,8 @@ export function mapLmuSession(
           SessionSubType: null,
           SessionSkipped: 0,
           SessionRunGroupsUsed: 0,
-          ResultsPositions: null,
-          ResultsFastestLap: [],
+          ResultsPositions: resultsPositions,
+          ResultsFastestLap: fastestLap,
           QualifyPositions: qualiResults.map((q) => ({
             Position: q.Position,
             ClassPosition: q.ClassPosition,

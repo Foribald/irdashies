@@ -33,6 +33,10 @@ describe('lmuSessionSignature', () => {
     ['totalLaps', 5],
     ['classId', 2],
     ['vehicleModel', 'Updated Car'],
+    // The session snapshot now carries the running order, so a position change
+    // has to invalidate it — otherwise an overtake does not reach the standings
+    // until someone's lap time or lap count happens to change.
+    ['place', 4],
   ])('changes when driver %s changes', (field, value) => {
     const before = session(20, true);
     const after = session(20, true);

@@ -222,24 +222,78 @@ describe('mapLmuSession', () => {
   it('builds qualifying results with per-class ranking', () => {
     const s = mapLmuSession(fixture());
     const qualy = s.QualifyResultsInfo?.Results ?? [];
+    // QualifyResultsInfo is 0-based in BOTH Position and ClassPosition, as a
+    // captured iRacing session shows; every consumer adds 1 back.
     expect(qualy.map((r) => [r.CarIdx, r.Position, r.ClassPosition])).toEqual([
-      [1, 1, 1],
-      [0, 2, 2],
+      [1, 0, 0],
+      [0, 1, 1],
+      [3, 2, 0],
     ]);
   });
 
-  it('skips drivers without a qualification time', () => {
-    const s = mapLmuSession(fixture());
+  it('keeps drivers without a qualifying time at the back of the grid', () => {
+    // They used to be dropped entirely, which removed them from the standings
+    // source rather than merely from the grid order.
+    const results = mapLmuSession(fixture()).QualifyResultsInfo?.Results ?? [];
+    expect(results.at(-1)?.CarIdx).toBe(3);
+  });
+
+  it('orders race results by track position and practice by best lap', () => {
+    // The GTE is slowest on lap time but leads on the road, so the two
+    // orderings disagree and the session type has to decide.
+    const leading = (raw: ReturnType<typeof fixture>) => {
+      raw.drivers[2].place = 1;
+      raw.drivers[1].place = 2;
+      raw.drivers[0].place = 3;
+      return raw;
+    };
+
+    const practice = leading(fixture());
+    practice.session = 2;
     expect(
-      (s.QualifyResultsInfo?.Results ?? []).some((r) => r.CarIdx === 3)
-    ).toBe(false);
+      (
+        mapLmuSession(practice).SessionInfo.Sessions[0].ResultsPositions ?? []
+      ).map((r) => r.CarIdx)
+    ).toEqual([1, 0, 3]);
+
+    const race = leading(fixture());
+    race.session = 10;
+    expect(
+      (mapLmuSession(race).SessionInfo.Sessions[0].ResultsPositions ?? []).map(
+        (r) => r.CarIdx
+      )
+    ).toEqual([3, 1, 0]);
+  });
+
+  it('publishes a live running order the standings can build rows from', () => {
+    const results =
+      mapLmuSession(fixture()).SessionInfo.Sessions[0].ResultsPositions ?? [];
+    // Position is 1-based, ClassPosition 0-based — they do not agree, and
+    // ClassPosition is the one the widgets render (after adding 1).
+    expect(results.map((r) => [r.CarIdx, r.Position, r.ClassPosition])).toEqual(
+      [
+        [1, 1, 0],
+        [0, 2, 1],
+        [3, 3, 0],
+      ]
+    );
+    expect(results.map((r) => r.LapsComplete)).toEqual([3, 2, 1]);
+    expect(results.map((r) => r.FastestTime)).toEqual([132.8, 134.5, 165.2]);
+  });
+
+  it('ranks classes by pace so the class blocks have a stable order', () => {
+    // GT3 estimates 132/134 against GTE's 164, so GT3 must score higher.
+    const drivers = mapLmuSession(fixture()).DriverInfo?.Drivers ?? [];
+    const relSpeed = (carIdx: number) =>
+      drivers.find((d) => d.CarIdx === carIdx)?.CarClassRelSpeed;
+    expect(relSpeed(1)).toBeGreaterThan(relSpeed(3) ?? 0);
   });
 
   it('shapes the session info list', () => {
     const s = mapLmuSession(fixture());
     expect(s.SessionInfo.Sessions).toHaveLength(1);
     expect(s.SessionInfo.Sessions[0].SessionLaps).toBe('12');
-    expect(s.SessionInfo.Sessions[0].QualifyPositions).toHaveLength(2);
+    expect(s.SessionInfo.Sessions[0].QualifyPositions).toHaveLength(3);
     expect(s.SplitTimeInfo.Sectors).toEqual([
       { SectorNum: 0, SectorStartPct: 0 },
       { SectorNum: 1, SectorStartPct: 1 / 3 },

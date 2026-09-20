@@ -5,6 +5,12 @@ import {
   type Telemetry,
 } from '@irdashies/types';
 import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
+import {
+  lmuOccupiedSlots,
+  lmuRankModeFor,
+  lmuSessionType,
+  rankLmuEntries,
+} from './positions';
 
 type Raw = import('../native/lmu').LmuRawTelemetry;
 
@@ -21,6 +27,8 @@ const PHASE_TO_SESSION_STATE: Record<number, number> = {
   9: SessionState.Racing,
 };
 
+/** iRacing's sentinel for a slot with no car in it. */
+const TRACK_NOT_IN_WORLD = -1;
 const TRACK_IN_PIT_STALL = 1;
 const TRACK_APPROACHING_PITS = 2;
 const TRACK_ON_TRACK = 4;
@@ -177,19 +185,61 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.PlayerCarPitSvStatus = num(0);
   t.CarLeftRight = num(mapLmuCarLeftRight(raw) ?? CarLeftRight.Off);
 
-  // Per-car
-  t.CarIdxLap = numArr(raw.vehTotalLaps);
-  t.CarIdxLapCompleted = numArr(raw.vehTotalLaps);
+  // Per-car.
+  //
+  // The addon sizes these arrays at max(mID) + 1, so a grid with sparse ids
+  // leaves holes. `occupied` marks the real cars; every hole gets the sentinel
+  // iRacing uses, or it reads downstream as a car in class 0 at position 0.
+  const occupied = lmuOccupiedSlots(raw);
+  const slots = occupied.length;
+  const perCar = (get: (carIdx: number) => number, empty: number) => ({
+    value: Array.from({ length: slots }, (_, carIdx) =>
+      occupied[carIdx] ? get(carIdx) : empty
+    ),
+  });
+
+  // Class positions come from the same ranking the session's ResultsPositions
+  // uses. If these two ever diverge, the Relative and the Standings disagree
+  // about what position a car is in, which is the bug this replaced.
+  const running = rankLmuEntries(
+    Array.from({ length: slots }, (_, carIdx) => carIdx)
+      .filter((carIdx) => occupied[carIdx])
+      .map((carIdx) => ({
+        carIdx,
+        classId: raw.vehClass[carIdx] ?? 0,
+        place: raw.vehPlaces[carIdx] ?? 0,
+        bestLapTime: raw.vehBestLapTime[carIdx] ?? 0,
+        qualification: raw.vehQualification?.[carIdx] ?? 0,
+        totalLaps: raw.vehTotalLaps[carIdx] ?? 0,
+        lapDistPct: raw.vehLapDistPct[carIdx] ?? -1,
+      })),
+    lmuRankModeFor(lmuSessionType(raw.session))
+  );
+
+  // iRacing's CarIdxLap is the lap in progress; mTotalLaps is laps completed.
+  t.CarIdxLap = perCar((i) => (raw.vehTotalLaps[i] ?? 0) + 1, -1);
+  t.CarIdxLapCompleted = perCar((i) => raw.vehTotalLaps[i] ?? 0, -1);
   t.CarIdxLapDistPct = lapDistPctArr(raw.vehLapDistPct);
-  t.CarIdxTrackSurface = {
-    value: Array.from(raw.vehInPits, (_, carIdx) => trackLocation(raw, carIdx)),
-  };
+  t.CarIdxTrackSurface = perCar(
+    (carIdx) => trackLocation(raw, carIdx),
+    TRACK_NOT_IN_WORLD
+  );
   t.CarIdxOnPitRoad = boolArr(raw.vehInPits, (v) => v === 1);
-  t.CarIdxPosition = numArr(raw.vehPlaces);
-  t.CarIdxClassPosition = numArr(undefined);
-  t.CarIdxClass = numArr(raw.vehClass);
+  t.CarIdxPosition = perCar((i) => running.overall[i] ?? 0, 0);
+  // 1-based here, unlike the 0-based ClassPosition in the session results.
+  t.CarIdxClassPosition = perCar((i) => running.classPosition[i] + 1, 0);
+  t.CarIdxClass = perCar((i) => raw.vehClass[i] ?? 0, -1);
   t.CarIdxF2Time = numArr(raw.vehTimeBehindLeader);
-  t.CarIdxEstTime = numArr(raw.vehEstimatedLapTime);
+  // Seconds INTO the current lap — not the whole-lap estimate that
+  // vehEstimatedLapTime carries. LMU sends a negative value when it cannot
+  // estimate, and -1 is finite, so fall back rather than pass it through.
+  t.CarIdxEstTime = perCar((carIdx) => {
+    const intoLap = raw.vehTimeIntoLap?.[carIdx] ?? -1;
+    if (intoLap >= 0) return intoLap;
+    const pct = raw.vehLapDistPct[carIdx] ?? -1;
+    const lapEstimate = raw.vehEstimatedLapTime?.[carIdx] ?? 0;
+    return pct >= 0 && lapEstimate > 0 ? pct * lapEstimate : 0;
+  }, 0);
   t.CarIdxLastLapTime = numArr(raw.vehLastLapTime);
   t.CarIdxBestLapTime = numArr(raw.vehBestLapTime);
   t.CarIdxGear = numArr(undefined);
