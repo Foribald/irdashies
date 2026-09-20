@@ -362,10 +362,14 @@ Napi::Value LmuSdkNode::Read(const Napi::CallbackInfo &info)
 {
   auto env = info.Env();
   auto out = Napi::Object::New(env);
-  const bool captured = CaptureSnapshot();
-  out.Set("running", captured && IsLive());
+  // A failed copy is not a disconnect. CaptureSnapshot leaves the last good
+  // snapshot in place, so at worst this frame is one poll stale; IsLive still
+  // decides whether LMU is actually there, by checking its window. Reporting
+  // not-running here instead tore every widget down and reset every store.
+  CaptureSnapshot();
+  out.Set("running", IsLive());
 
-  if (!captured || !IsLive())
+  if (!IsLive())
     return out;
 
   const auto &scoring = _snapshot.scoring.scoringInfo;

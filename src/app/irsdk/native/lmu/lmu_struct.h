@@ -344,6 +344,17 @@ struct LMUSnapshotState {
   uint8_t telemetryVehicles;
 };
 
+/**
+ * Whether a copied block was taken while the sim was not mid-write.
+ *
+ * Every field is checked for STABILITY across the copy — same value before it,
+ * in it, and after it. This deliberately does not require the scoring and
+ * telemetry vehicle counts to agree with each other: scoring lists every car in
+ * the session while telemetry only covers the cars the sim publishes physics
+ * for, so online they legitimately differ for as long as someone is joining,
+ * sitting in the garage or spectating. Requiring equality rejected every read
+ * for the whole of that window, which surfaced as a false disconnect.
+ */
 constexpr bool IsCoherentLmuSnapshot(
     const LMUSnapshotState &before,
     const LMUSnapshotState &snapshot,
@@ -353,12 +364,19 @@ constexpr bool IsCoherentLmuSnapshot(
       snapshot.scoringUpdate == after.scoringUpdate &&
       before.telemetryUpdate == snapshot.telemetryUpdate &&
       snapshot.telemetryUpdate == after.telemetryUpdate &&
-      snapshot.scoringVehicles == snapshot.telemetryVehicles;
+      before.scoringVehicles == snapshot.scoringVehicles &&
+      snapshot.scoringVehicles == after.scoringVehicles &&
+      before.telemetryVehicles == snapshot.telemetryVehicles &&
+      snapshot.telemetryVehicles == after.telemetryVehicles;
 }
 
 static_assert(IsCoherentLmuSnapshot({1, 2, 3, 3}, {1, 2, 3, 3}, {1, 2, 3, 3}));
 static_assert(!IsCoherentLmuSnapshot({1, 2, 3, 3}, {2, 2, 3, 3}, {2, 2, 3, 3}));
+// A count that moves during the copy is a torn read, and still rejected.
 static_assert(!IsCoherentLmuSnapshot({1, 2, 3, 3}, {1, 2, 3, 2}, {1, 2, 3, 3}));
+static_assert(!IsCoherentLmuSnapshot({1, 2, 12, 11}, {1, 2, 11, 11}, {1, 2, 11, 11}));
+// A settled online grid where telemetry covers fewer cars than scoring is fine.
+static_assert(IsCoherentLmuSnapshot({1, 2, 12, 11}, {1, 2, 12, 11}, {1, 2, 12, 11}));
 
 static_assert(sizeof(LMUVect3) == 24, "LMUVect3 size mismatch");
 static_assert(sizeof(LMUWheel) == 260, "LMUWheel size mismatch");
