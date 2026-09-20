@@ -47,6 +47,12 @@ export interface LmuRawVehicle {
 export interface LmuRawTelemetry {
   running: boolean;
   gameVersion: number;
+  /**
+   * The sim's publish counters (SME_UPDATE_SCORING / SME_UPDATE_TELEMETRY).
+   * Unchanged counters mean this is a frame you have already processed.
+   */
+  scoringUpdate: number;
+  telemetryUpdate: number;
   trackName: string;
   playerName: string;
   serverName: string;

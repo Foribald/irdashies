@@ -117,6 +117,10 @@ export async function publishIRacingSDKEvents(
     let lastInspectorTelemetryPublishTime = Number.NEGATIVE_INFINITY;
     let lastSessionPollTime = Number.NEGATIVE_INFINITY;
     let wasRunning = false;
+    // The sim's publish counter for the frame last delivered. Compared with
+    // !== rather than >, so a counter that resets when the sim restarts still
+    // counts as new.
+    let lastTelemetryUpdate = -1;
 
     while (!shouldStop) {
       const pollStartedAt = performance.now();
@@ -234,26 +238,37 @@ export async function publishIRacingSDKEvents(
         }
       }
 
-      perfMetrics.markStart('lifecycleTelemetry');
-      const telemetry = mapLmuTelemetry(raw);
-      lifecycle?._onTelemetry(telemetry);
-      perfMetrics.markEnd('lifecycleTelemetry');
-      processorHost?.onFrame(telemetry);
+      // Only deliver a frame the sim has actually published. The poll is a
+      // fixed 16 ms that is not synchronised to LMU's writer, so without this
+      // the same frame is mapped and broadcast more than once whenever the two
+      // rates drift past each other — an object and an IPC hop to tell every
+      // widget what it already knows, and a duplicate sample that makes the
+      // trace plots hold still and then jump.
+      const isNewTelemetryFrame = raw.telemetryUpdate !== lastTelemetryUpdate;
+      lastTelemetryUpdate = raw.telemetryUpdate;
 
-      if (
-        perfTelemetryDeliveryEnabled &&
-        overlayManager.hasTelemetryInspectorSubscribers() &&
-        tickTime - lastInspectorTelemetryPublishTime >=
-          1000 / TELEMETRY_INSPECTOR_RATE_HZ
-      ) {
-        lastInspectorTelemetryPublishTime = tickTime;
-        overlayManager.publishMessage(
-          'telemetryInspector:telemetry',
-          telemetry
-        );
+      if (isNewTelemetryFrame) {
+        perfMetrics.markStart('lifecycleTelemetry');
+        const telemetry = mapLmuTelemetry(raw);
+        lifecycle?._onTelemetry(telemetry);
+        perfMetrics.markEnd('lifecycleTelemetry');
+        processorHost?.onFrame(telemetry);
+
+        if (
+          perfTelemetryDeliveryEnabled &&
+          overlayManager.hasTelemetryInspectorSubscribers() &&
+          tickTime - lastInspectorTelemetryPublishTime >=
+            1000 / TELEMETRY_INSPECTOR_RATE_HZ
+        ) {
+          lastInspectorTelemetryPublishTime = tickTime;
+          overlayManager.publishMessage(
+            'telemetryInspector:telemetry',
+            telemetry
+          );
+        }
+        telemetryCallbacks.forEach((callback) => callback(telemetry));
+        perfMetrics.tick(telemetry);
       }
-      telemetryCallbacks.forEach((callback) => callback(telemetry));
-      perfMetrics.tick(telemetry);
 
       if (session) {
         latestSession = session;

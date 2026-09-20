@@ -55,6 +55,8 @@ LmuSdkNode::LmuSdkNode(const Napi::CallbackInfo &info)
   , _mapped(NULL)
   , _snapshot{}
   , _hasSnapshot(false)
+  , _scoringUpdate(0)
+  , _telemetryUpdate(0)
 {
 }
 
@@ -101,6 +103,8 @@ void LmuSdkNode::Unmap()
 {
   _mapped = NULL;
   _hasSnapshot = false;
+  _scoringUpdate = 0;
+  _telemetryUpdate = 0;
   if (_view != NULL)
   {
     UnmapViewOfFile(_view);
@@ -141,6 +145,17 @@ bool LmuSdkNode::CaptureSnapshot()
   if (_mapped == NULL)
     return false;
 
+  // Cheap gate. The sim bumps these counters when it publishes, so two 4-byte
+  // reads answer "is there anything new?" without copying the 325 KB block. The
+  // poll rate can then exceed the publish rate without the copy cost following
+  // it, and the retained snapshot is by definition still current.
+  if (_hasSnapshot &&
+      _mapped->generic.events.SME_UPDATE_SCORING == _scoringUpdate &&
+      _mapped->generic.events.SME_UPDATE_TELEMETRY == _telemetryUpdate)
+  {
+    return true;
+  }
+
   for (int attempt = 0; attempt < 4; ++attempt)
   {
     const LMUSnapshotState before = {
@@ -171,6 +186,8 @@ bool LmuSdkNode::CaptureSnapshot()
 
     _snapshot = candidate;
     _hasSnapshot = true;
+    _scoringUpdate = snapshot.scoringUpdate;
+    _telemetryUpdate = snapshot.telemetryUpdate;
     return true;
   }
 
@@ -375,6 +392,10 @@ Napi::Value LmuSdkNode::Read(const Napi::CallbackInfo &info)
   const auto &scoring = _snapshot.scoring.scoringInfo;
 
   out.Set("gameVersion", _snapshot.generic.gameVersion);
+  // The sim's own publish counters. Consumers compare them to skip work on a
+  // frame they have already seen, rather than re-deriving that from the data.
+  out.Set("scoringUpdate", _snapshot.generic.events.SME_UPDATE_SCORING);
+  out.Set("telemetryUpdate", _snapshot.generic.events.SME_UPDATE_TELEMETRY);
   SetString(out, "trackName", scoring.mTrackName, sizeof(scoring.mTrackName));
   SetString(out, "playerName", scoring.mPlayerName, sizeof(scoring.mPlayerName));
   SetString(out, "serverName", scoring.mServerName, sizeof(scoring.mServerName));

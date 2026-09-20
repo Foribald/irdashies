@@ -39,6 +39,10 @@ private:
     const LMUObjectOut *_mapped;
     LMUObjectOut _snapshot;
     bool _hasSnapshot;
+    // Update counters of the snapshot currently held, so an unchanged frame can
+    // be recognised from two 4-byte reads instead of a 325 KB copy.
+    uint32_t _scoringUpdate;
+    uint32_t _telemetryUpdate;
     mutable std::map<std::string, int> _classIds;
 };
 
