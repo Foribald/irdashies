@@ -23,7 +23,7 @@ const PHASE_TO_SESSION_STATE: Record<number, number> = {
 
 const TRACK_IN_PIT_STALL = 1;
 const TRACK_APPROACHING_PITS = 2;
-const TRACK_ON_TRACK = 4;
+const TRACK_ON_TRACK = 3;
 
 const num = (v: number | undefined) => ({ value: [v ?? 0] });
 const bool = (v: boolean | number | undefined) => ({ value: [Boolean(v)] });
@@ -189,7 +189,7 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.CarIdxClassPosition = numArr(undefined);
   t.CarIdxClass = numArr(raw.vehClass);
   t.CarIdxF2Time = numArr(raw.vehTimeBehindLeader);
-  t.CarIdxEstTime = numArr(raw.vehEstimatedLapTime);
+  t.CarIdxEstTime = numArr(raw.vehTimeIntoLap);
   t.CarIdxLastLapTime = numArr(raw.vehLastLapTime);
   t.CarIdxBestLapTime = numArr(raw.vehBestLapTime);
   t.CarIdxGear = numArr(undefined);
@@ -208,7 +208,9 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);
   t.Throttle = num(raw.filteredThrottle);
   t.Brake = num(raw.filteredBrake);
-  t.Clutch = num(raw.filteredClutch);
+  t.Clutch = num(
+    raw.filteredClutch === undefined ? undefined : 1 - raw.filteredClutch
+  );
   t.Gear = num(raw.gear);
   t.RPM = num(raw.engineRPM);
   t.Lap = num(raw.lapNumber);
@@ -301,7 +303,9 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.ShiftGrindRPM = num(raw.engineMaxRPM ?? 0);
   t.ThrottleRaw = num(raw.unfilteredThrottle);
   t.BrakeRaw = num(raw.unfilteredBrake);
-  t.ClutchRaw = num(raw.unfilteredClutch);
+  t.ClutchRaw = num(
+    raw.unfilteredClutch === undefined ? undefined : 1 - raw.unfilteredClutch
+  );
   t.BrakeABSactive = bool(raw.absActive);
   t.dcBrakeBias = num(
     raw.rearBrakeBias === undefined ? 0 : 1 - raw.rearBrakeBias
@@ -319,7 +323,7 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   // Defaults for everything not meaningful in LMU (pit service, radios, FFB,
   // tyre models, dash controls...). Kept long but explicit so the shape stays
   // stable if slots get consumed later.
-  t.RadioTransmitCarIdx = num(0);
+  t.RadioTransmitCarIdx = num(-1);
   t.RadioTransmitRadioIdx = num(0);
   t.RadioTransmitFrequencyIdx = num(0);
   t.PushToTalk = bool(false);

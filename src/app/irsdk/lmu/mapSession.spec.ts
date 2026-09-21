@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { LmuRawSession } from '../native/lmu';
-import { mapLmuSession, resolveLmuCarId } from './mapSession';
+import {
+  mapLmuSession,
+  resolveLmuCarId,
+  resolveLmuTrackId,
+} from './mapSession';
 
 function fixture(): LmuRawSession {
   return {
@@ -150,7 +154,7 @@ describe('mapLmuSession', () => {
   it('maps weekend info', () => {
     const s = mapLmuSession(fixture());
     expect(s.WeekendInfo.TrackName).toBe('Spa Francorchamps');
-    expect(s.WeekendInfo.TrackID).toBe(0);
+    expect(s.WeekendInfo.TrackID).toBe(resolveLmuTrackId('Spa Francorchamps'));
     expect(s.WeekendInfo.TrackDisplayName).toBe('Spa Francorchamps');
     expect(s.WeekendInfo.TrackLength).toBe('7004 m');
     expect(s.WeekendInfo.SubSessionID).toBe(2);
@@ -247,10 +251,10 @@ describe('mapLmuSession', () => {
     ]);
   });
 
-  it('does not guess an iRacing map id from an LMU track name', () => {
-    const s = mapLmuSession({ ...fixture(), trackName: 'Lusail' });
-    expect(s.WeekendInfo.TrackName).toBe('Lusail');
-    expect(s.WeekendInfo.TrackID).toBe(0);
+  it('gives each LMU track a stable simulator-specific id', () => {
+    expect(resolveLmuTrackId('Imola')).toBe(resolveLmuTrackId(' imola '));
+    expect(resolveLmuTrackId('Imola')).not.toBe(resolveLmuTrackId('Lusail'));
+    expect(resolveLmuTrackId('Imola')).toBeGreaterThanOrEqual(1_000_000);
   });
 
   it('includes a recorded LMU track map when available', () => {

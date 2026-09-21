@@ -11,6 +11,16 @@ type Raw = import('../native/lmu').LmuRawSession;
 // presented by their slot index; replace CarNumber sourcing if a REST/league
 // datasource is added later.
 const DEFAULT_CAR_NUMBER = (carIdx: number) => String(carIdx + 1);
+const LMU_TRACK_ID_OFFSET = 1_000_000;
+
+export function resolveLmuTrackId(trackName: string): number {
+  let hash = 2166136261;
+  for (const character of trackName.trim().toLowerCase()) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return LMU_TRACK_ID_OFFSET + (hash >>> 0);
+}
 
 const LMU_MANUFACTURER_CAR_IDS: readonly [RegExp, number][] = [
   [/\baston martin\b/i, 10001],
@@ -147,7 +157,7 @@ export function mapLmuSession(
   return {
     WeekendInfo: {
       TrackName: raw.trackName,
-      TrackID: 0,
+      TrackID: resolveLmuTrackId(raw.trackName),
       TrackLength: `${trackLengthM} m`,
       TrackLengthOfficial: `${trackLengthM} m`,
       TrackDisplayName: raw.trackName,
