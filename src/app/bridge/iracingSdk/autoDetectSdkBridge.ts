@@ -84,6 +84,10 @@ export async function publishAutoDetectedSdkEvents(
     logger.info(
       `[autoDetectSdkBridge] Selected ${simulator} (${lastProbeState})`
     );
+    // Only known once the probe settles, so the settings window shows nothing
+    // until here rather than guessing.
+    const { setActiveSimulator } = await import('./setup');
+    setActiveSimulator(overlayManager, simulator);
     const module =
       simulator === 'lmu'
         ? await import('./lmuSdkBridge')

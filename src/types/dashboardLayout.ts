@@ -93,6 +93,12 @@ export type FontSize =
   | '8xl'
   | '9xl';
 
+/** The simulator the user has pinned, or 'auto' to detect it at runtime. */
+export type SimulatorPreference = 'auto' | 'iracing' | 'lmu';
+
+/** A simulator actually selected — 'auto' has been resolved away. */
+export type ActiveSimulator = 'iracing' | 'lmu';
+
 export interface GeneralSettingsType {
   fontType?: FontType;
   fontSize?: FontSize;
@@ -127,6 +133,12 @@ export interface GeneralSettingsType {
   enableAutoStart?: boolean;
   startMinimized?: boolean;
   closeToTray?: boolean;
+  /**
+   * Which simulator to read telemetry from. 'auto' probes both and takes
+   * whichever is publishing, preferring LMU when both are. Defaults to 'auto'
+   * when unset. A `--sim=` argument or IRDASHIES_SIM still overrides this.
+   */
+  simulator?: SimulatorPreference;
   compactMode?: 'off' | 'compact' | 'ultra';
   overlayAlwaysOnTop?: boolean;
   enableNetworkAccess?: boolean;
