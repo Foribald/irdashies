@@ -23,7 +23,7 @@ import {
   mapLmuTelemetry,
 } from '../../irsdk/lmu/mapTelemetry';
 import {
-  findTinyPedalTrackMap,
+  loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
   tinyPedalTrackMapDirectories,
@@ -144,11 +144,7 @@ export async function publishIRacingSDKEvents(
         const firstUnavailableFrame = unavailableSince === null;
         unavailableSince ??= unavailableAt;
         if (
-          shouldHoldLmuRunningState(
-            wasRunning,
-            unavailableSince,
-            unavailableAt
-          )
+          shouldHoldLmuRunningState(wasRunning, unavailableSince, unavailableAt)
         ) {
           if (firstUnavailableFrame) {
             logger.warn(
@@ -188,27 +184,25 @@ export async function publishIRacingSDKEvents(
 
       if (raw.trackName !== activeTrackName) {
         activeTrackName = raw.trackName;
-        trackMap = mapStorage.load(activeTrackName);
+        const loadedMap = loadLmuTrackMap(
+          activeTrackName,
+          mapStorage,
+          tinyPedalTrackMapDirectories()
+        );
+        trackMap = loadedMap?.map ?? null;
         pitSpeedLimitMs = undefined;
         lastPitCalibrationSpeed = undefined;
-        if (!trackMap) {
-          const imported = findTinyPedalTrackMap(
-            activeTrackName,
-            tinyPedalTrackMapDirectories()
-          );
-          if (imported) {
-            trackMap = imported.map;
-            try {
-              mapStorage.save(activeTrackName, imported.map);
-              logger.info(
-                `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${imported.filePath}`
-              );
-            } catch (error) {
-              logger.error(
-                '[lmuSdkBridge] Failed to save imported track map',
-                error
-              );
-            }
+        if (loadedMap?.source === 'tinyPedal') {
+          try {
+            mapStorage.save(activeTrackName, loadedMap.map);
+            logger.info(
+              `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${loadedMap.filePath}`
+            );
+          } catch (error) {
+            logger.error(
+              '[lmuSdkBridge] Failed to save imported track map',
+              error
+            );
           }
         }
         mapRecorder.reset(activeTrackName);
@@ -247,8 +241,7 @@ export async function publishIRacingSDKEvents(
 
       const tickTime = performance.now();
       const playerInPits =
-        raw.playerVehicleIdx >= 0 &&
-        raw.vehInPits[raw.playerVehicleIdx] === 1;
+        raw.playerVehicleIdx >= 0 && raw.vehInPits[raw.playerVehicleIdx] === 1;
       const calibrationSpeed = raw.speed;
       const canCalibratePitSpeed =
         pitSpeedLimitMs === undefined &&

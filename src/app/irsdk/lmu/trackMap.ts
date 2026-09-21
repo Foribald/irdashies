@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LmuTrackMap } from '@irdashies/types';
+import bundledTrackMaps from './lmu-track-maps.json';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -111,6 +112,59 @@ const normalizeTrackName = (value: string) =>
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
+
+const BUNDLED_LMU_ALIASES: Record<string, string> = {
+  portimao: 'Algarve International Circuit',
+  autodromointernacionaldoalgarve: 'Algarve International Circuit',
+  imola: 'Autodromo Enzo e Dino Ferrari',
+  interlagos: 'Autódromo José Carlos Pace',
+  monza: 'Autodromo Nazionale Monza',
+  barcelona: 'Circuit de Barcelona',
+  circuitdecatalunya: 'Circuit de Barcelona',
+  circuitdebarcelonacatalunya: 'Circuit de Barcelona',
+  lemans: 'Circuit de la Sarthe',
+  circuitdes24heuresdumans: 'Circuit de la Sarthe',
+  lemansnochicane: 'Circuit de la Sarthe Mulsanne',
+  circuitdelasarthemulsannenochicanes: 'Circuit de la Sarthe Mulsanne',
+  cota: 'Circuit of the Americas',
+  spa: 'Circuit de Spa-Francorchamps',
+  spafrancorchamps: 'Circuit de Spa-Francorchamps',
+  spaendurancelayout: 'Circuit de Spa-Francorchamps',
+  fuji: 'Fuji Speedway',
+  fujiclassic: 'Fuji Speedway Classic',
+  qatar: 'Lusail International Circuit',
+  lusail: 'Lusail International Circuit',
+  paulricard: 'Paul Ricard - ELMS',
+  circuitpaulricard: 'Paul Ricard - ELMS',
+  sebring: 'Sebring International Raceway',
+  silverstone: 'Silverstone Grand Prix Circuit - WEC',
+  silverstonegrandprix: 'Silverstone Grand Prix Circuit - WEC',
+  bahrain: 'Bahrain International Circuit',
+  bahraininternationalendurancecircuit: 'Bahrain Endurance Circuit',
+  bahraininternationaloutercircuit: 'Bahrain Outer Circuit',
+  bahraininternationalpaddockcircuit: 'Bahrain Paddock Circuit',
+  daytona: 'Daytona International Speedway Road Course',
+  lagunaseca: 'WeatherTech Raceway Laguna Seca',
+};
+
+export function findBundledLmuTrackMap(trackName: string): LmuTrackMap | null {
+  const normalized = normalizeTrackName(trackName);
+  if (!normalized) return null;
+  const maps = bundledTrackMaps as unknown as Record<string, LmuTrackMap>;
+  const exactTitle = Object.keys(maps).find(
+    (title) => normalizeTrackName(title) === normalized
+  );
+  const alias = BUNDLED_LMU_ALIASES[normalized];
+  const partialTitle = Object.keys(maps)
+    .filter((title) => {
+      const candidate = normalizeTrackName(title);
+      return candidate.includes(normalized) || normalized.includes(candidate);
+    })
+    .sort(
+      (a, b) => normalizeTrackName(b).length - normalizeTrackName(a).length
+    )[0];
+  return maps[exactTitle ?? alias ?? partialTitle] ?? null;
+}
 
 export function parseTinyPedalTrackMap(svg: string): LmuTrackMap | null {
   const pointsAttribute = svg.match(
@@ -307,4 +361,25 @@ export class LmuTrackMapStorage {
     fs.writeFileSync(temporaryPath, JSON.stringify(data));
     fs.renameSync(temporaryPath, this.filePath);
   }
+}
+
+export function loadLmuTrackMap(
+  trackName: string,
+  storage: LmuTrackMapStorage,
+  tinyPedalDirectories: readonly string[]
+): {
+  map: LmuTrackMap;
+  source: 'storage' | 'bundled' | 'tinyPedal';
+  filePath?: string;
+} | null {
+  const stored = storage.load(trackName);
+  if (stored) return { map: stored, source: 'storage' };
+
+  const bundled = findBundledLmuTrackMap(trackName);
+  if (bundled) return { map: bundled, source: 'bundled' };
+
+  const imported = findTinyPedalTrackMap(trackName, tinyPedalDirectories);
+  return imported
+    ? { map: imported.map, source: 'tinyPedal', filePath: imported.filePath }
+    : null;
 }

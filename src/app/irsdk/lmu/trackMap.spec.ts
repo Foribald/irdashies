@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  findBundledLmuTrackMap,
   findTinyPedalTrackMap,
+  loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
   lmuGroundPosition,
@@ -68,8 +70,10 @@ describe('LMU track map', () => {
       1300
     );
     const points = map.active.trackPathPoints;
-    const width = Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x));
-    const height = Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y));
+    const width =
+      Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x));
+    const height =
+      Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y));
 
     expect(height).toBeGreaterThan(width);
     expect(map.startFinish.point).toMatchObject({
@@ -150,6 +154,115 @@ describe('LMU track map', () => {
     expect(
       findTinyPedalTrackMap('Autodromo Jose Carlos Pace', [directory])?.filePath
     ).toBe(path.join(directory, 'Autódromo José Carlos Pace.svg'));
+  });
+
+  it.each([
+    'Algarve International Circuit',
+    'Autodromo Enzo e Dino Ferrari',
+    'Autodromo Nazionale Monza',
+    'Autódromo José Carlos Pace',
+    'Bahrain Endurance Circuit',
+    'Bahrain International Circuit',
+    'Bahrain Outer Circuit',
+    'Bahrain Paddock Circuit',
+    'Circuit de Barcelona',
+    'Circuit de la Sarthe',
+    'Circuit de la Sarthe Mulsanne',
+    'Circuit de Spa-Francorchamps',
+    'Circuit of the Americas',
+    'COTA National Circuit',
+    'Daytona International Speedway Road Course',
+    'Fuji Speedway',
+    'Fuji Speedway Classic',
+    'Lusail International Circuit',
+    'Lusail Short Circuit',
+    'Monza Curva Grande Circuit',
+    'Paul Ricard - 1A',
+    'Paul Ricard - 1A-V2',
+    'Paul Ricard - 1A-V2-Short',
+    'Paul Ricard - 3A',
+    'Paul Ricard - ELMS',
+    'Sebring International Raceway',
+    'Sebring School Circuit',
+    'Silverstone Grand Prix Circuit - WEC',
+    'Silverstone International Circuit',
+    'Silverstone National Circuit',
+    'WeatherTech Raceway Laguna Seca',
+  ])('loads the bundled TinyPedal map for %s', (trackName) => {
+    const map = findBundledLmuTrackMap(trackName);
+
+    expect(map?.orientation).toBe('lmu-ccw-v1');
+    expect(map?.active.trackPathPoints).toHaveLength(512);
+  });
+
+  it.each([
+    'Algarve International Circuit',
+    'Autodromo Enzo e Dino Ferrari',
+    'Autodromo Nazionale Monza',
+    'Autódromo José Carlos Pace',
+    'Circuit de Barcelona',
+    'Circuit de la Sarthe',
+    'Circuit de la Sarthe Mulsanne',
+    'Circuit de Spa-Francorchamps',
+    'Circuit of the Americas',
+    'Daytona International Speedway Road Course',
+    'Sebring International Raceway',
+    'Silverstone Grand Prix Circuit - WEC',
+    'WeatherTech Raceway Laguna Seca',
+  ])('attaches trustworthy turn metadata for %s', (trackName) => {
+    expect(findBundledLmuTrackMap(trackName)?.turns?.length).toBeGreaterThan(0);
+  });
+
+  it('loads bundled maps through tolerant aliases', () => {
+    expect(findBundledLmuTrackMap('Portimão')).not.toBeNull();
+    expect(findBundledLmuTrackMap('Qatar')).not.toBeNull();
+    expect(
+      findBundledLmuTrackMap('Bahrain International Endurance Circuit')
+    ).not.toBeNull();
+    expect(findBundledLmuTrackMap('Fuji Classic')).not.toBeNull();
+  });
+
+  it('loads bundled maps with iRacing-style turn labels', () => {
+    const map = findBundledLmuTrackMap('Autodromo Nazionale Monza');
+
+    expect(map?.turns?.some((turn) => turn.content === '1')).toBe(true);
+    expect(
+      map?.turns?.some((turn) => turn.content?.includes('Parabolica'))
+    ).toBe(true);
+  });
+
+  it('loads storage before bundled maps and bundled maps before TinyPedal', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'irdashies-lmu-'));
+    temporaryDirectories.push(directory);
+    const storage = new LmuTrackMapStorage(path.join(directory, 'maps.json'));
+    const stored = normalizeLmuTrackMap(
+      [
+        { x: 0, y: 0, distance: 0 },
+        { x: 100, y: 0, distance: 500 },
+        { x: 0, y: 0, distance: 1000 },
+      ],
+      1000
+    );
+    storage.save('Silverstone Circuit', stored);
+    const points = Array.from(
+      { length: 20 },
+      (_, index) => `${index},${index % 2}`
+    ).join(' ');
+    fs.writeFileSync(
+      path.join(directory, 'Silverstone Circuit.svg'),
+      `<svg><polyline id="map" points="${points}"/></svg>`
+    );
+    fs.writeFileSync(
+      path.join(directory, 'Monza.svg'),
+      `<svg><polyline id="map" points="${points}"/></svg>`
+    );
+
+    expect(
+      loadLmuTrackMap('Silverstone Circuit', storage, [directory])
+    ).toMatchObject({ map: stored, source: 'storage' });
+    expect(loadLmuTrackMap('Monza', storage, [directory])?.source).toBe(
+      'bundled'
+    );
   });
 
   it('persists maps by exact LMU track name', () => {
