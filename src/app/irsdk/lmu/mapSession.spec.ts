@@ -323,6 +323,12 @@ describe('mapLmuSession', () => {
     expect(s.WeekendInfo.TrackConfigName).toBeNull();
   });
 
+  it('gives each LMU track a stable simulator-specific id', () => {
+    expect(resolveLmuTrackId('Imola')).toBe(resolveLmuTrackId(' imola '));
+    expect(resolveLmuTrackId('Imola')).not.toBe(resolveLmuTrackId('Lusail'));
+    expect(resolveLmuTrackId('Imola')).toBeGreaterThanOrEqual(1_000_000);
+  });
+
   it('includes a recorded LMU track map when available', () => {
     const trackMap = {
       active: {

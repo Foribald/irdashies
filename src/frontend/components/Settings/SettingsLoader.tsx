@@ -29,6 +29,7 @@ import { useDashboard } from '@irdashies/context';
 import { SlowCarAheadSettings } from './sections/SlowCarAheadSettings';
 import { SectorDeltaSettings } from './sections/SectorDeltaSettings';
 import { DeltaSpeedSettings } from './sections/DeltaSpeedSettings';
+import { CarSystemsSettings } from './sections/CarSystemsSettings';
 import { HeartRateSettings } from './sections/HeartRateSettings';
 import { CornerNameSettings } from './sections/CornerNameSettings';
 import { LapTraceSettings } from './sections/LapTraceSettings';
@@ -104,6 +105,8 @@ export const SettingsLoader = ({ previewMode }: SettingsLoaderProps = {}) => {
       return <SectorDeltaSettings />;
     case 'deltaspeed':
       return <DeltaSpeedSettings />;
+    case 'carsystems':
+      return <CarSystemsSettings />;
     case 'heartrate':
       return <HeartRateSettings />;
     case 'cornername':

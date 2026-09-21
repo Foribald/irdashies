@@ -1,9 +1,9 @@
 import { memo, Fragment } from 'react';
+import { buildDeltaPlaceholder } from './deltaPlaceholder';
 
 interface LapTimeDeltasCellProps {
   lapTimeDeltas?: number[];
   emptyLapDeltaPlaceholders: number[] | null;
-  isPlayer: boolean;
   compactMode?: string;
   decimalPlaces?: number;
 }
@@ -12,7 +12,6 @@ export const LapTimeDeltasCell = memo(
   ({
     lapTimeDeltas,
     emptyLapDeltaPlaceholders,
-    isPlayer,
     compactMode,
     decimalPlaces,
   }: LapTimeDeltasCellProps) => {
@@ -21,6 +20,11 @@ export const LapTimeDeltasCell = memo(
     if (!emptyLapDeltaPlaceholders) {
       return null;
     }
+
+    // Keeps a stable column width whether or not a value is present, so the
+    // header label above stays aligned with the data regardless of which
+    // rows/laps have a delta yet.
+    const placeholderText = buildDeltaPlaceholder(decimalPlaces ?? 1);
 
     return (
       <Fragment>
@@ -41,9 +45,9 @@ export const LapTimeDeltasCell = memo(
               <td
                 key={index}
                 data-column="lapTimeDelta"
-                className={`w-auto ${pxClass} text-center whitespace-nowrap`}
+                className={`w-auto ${pxClass} text-center whitespace-nowrap text-white/40`}
               >
-                {isPlayer ? '-' : ''}
+                {placeholderText}
               </td>
             );
           }

@@ -171,6 +171,9 @@ describe('mapLmuTelemetry', () => {
     expect(t.LapCurrentLapTime.value[0]).toBeCloseTo(50.4);
     expect(t.Throttle.value[0]).toBeCloseTo(0.79);
     expect(t.Brake.value[0]).toBe(0);
+    expect(t.Clutch.value[0]).toBe(1);
+    expect(t.ClutchRaw.value[0]).toBe(1);
+    expect(t.RadioTransmitCarIdx.value[0]).toBe(-1);
     expect(t.BrakeABSactive.value[0]).toBe(true);
     expect(t.Speed).toBeDefined();
     expect(t.SteeringWheelAngle.value[0]).toBeCloseTo(
@@ -211,8 +214,9 @@ describe('mapLmuTelemetry', () => {
     expect(t.CarIdxLapCompleted.value).toEqual([2, 3, 1]);
     expect(t.CarIdxClass.value).toEqual([0, 0, 1]);
     expect(t.CarIdxBestLapTime.value).toEqual([134.5, 132.8, 137.1]);
+    expect(t.CarIdxEstTime.value).toEqual([50, 60, 20]);
     expect(t.CarIdxOnPitRoad.value).toEqual([false, false, true]);
-    expect(t.CarIdxTrackSurface.value).toEqual([4, 4, 1]);
+    expect(t.CarIdxTrackSurface.value).toEqual([3, 3, 1]);
   });
 
   it('falls back to the scoring clock when there is no player car', () => {

@@ -86,7 +86,7 @@ export const lmuIsLapLimited = (maxLaps: number | undefined): boolean =>
 const TRACK_NOT_IN_WORLD = -1;
 const TRACK_IN_PIT_STALL = 1;
 const TRACK_APPROACHING_PITS = 2;
-const TRACK_ON_TRACK = 4;
+const TRACK_ON_TRACK = 3;
 
 const num = (v: number | undefined) => ({ value: [v ?? 0] });
 /**
@@ -377,6 +377,9 @@ export function mapLmuTelemetry(
   // released, and useInputs inverts whatever it is given -- so a pass-through
   // showed a full clutch bar at rest. Throttle and brake need no flip; both
   // conventions agree that 0 is off. ClutchRaw below takes the same flip.
+  //
+  // Absent (no player car) reads as 1, fully engaged: num() would coerce the
+  // undefined to 0, which is the pedal pinned to the floor.
   t.Clutch = num(1 - (raw.filteredClutch ?? 0));
   t.Gear = num(raw.gear);
   t.RPM = num(raw.engineRPM);
