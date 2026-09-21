@@ -7,6 +7,7 @@ import { SplitTimeInfo } from './split-info';
 import { CarSetupInfo } from './setup-info';
 
 export interface LmuTrackMap {
+  orientation?: 'lmu-ccw-v1';
   active: {
     inside: string;
     outside: string;

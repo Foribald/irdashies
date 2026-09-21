@@ -27,6 +27,7 @@ import { CornerNameOverlay } from './components/CornerNameOverlay';
 import { LapTrace } from './components/LapTrace';
 import { Battle } from './components/Battle/Battle';
 import { Gantry } from './components/Gantry/Gantry';
+import { TyrePanel } from './components/TyrePanel/TyrePanel';
 import {
   AccelerationTimer,
   BrakePressure,
@@ -37,7 +38,6 @@ import {
   SuspensionPosition,
   TrackClock,
   TrackNotes,
-  TyrePanel,
 } from './components/DrivingMetrics/DrivingMetrics';
 import type { WidgetConfigMap } from '@irdashies/types';
 import type { ElementType } from 'react';

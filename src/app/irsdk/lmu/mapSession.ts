@@ -21,6 +21,22 @@ type RawVehicle = import('../native/lmu').LmuRawVehicle;
 // presented by their slot index; replace CarNumber sourcing if a REST/league
 // datasource is added later.
 const DEFAULT_CAR_NUMBER = (carIdx: number) => String(carIdx + 1);
+const DEFAULT_MAX_RPM = 8500;
+
+export function deriveLmuShiftLightRpm(engineMaxRpm?: number) {
+  const maxRpm =
+    engineMaxRpm !== undefined &&
+    Number.isFinite(engineMaxRpm) &&
+    engineMaxRpm > 0
+      ? engineMaxRpm
+      : DEFAULT_MAX_RPM;
+  return {
+    first: Math.round(maxRpm * 0.91),
+    shift: Math.round(maxRpm * 0.95),
+    last: Math.round(maxRpm * 0.97),
+    blink: Math.round(maxRpm * 0.97),
+  };
+}
 
 const LMU_MANUFACTURER_CAR_IDS: readonly [RegExp, number][] = [
   [/\baston martin\b/i, 10001],
@@ -62,6 +78,12 @@ function reasonOut(finishStatus: number): { id: number; str: string } {
   return { id: 0, str: 'Running' };
 }
 
+const LMU_CONTROL_AI = 1;
+
+export function isLmuAiControlled(control?: number): boolean | undefined {
+  return control === undefined ? undefined : control === LMU_CONTROL_AI;
+}
+
 /**
  * Builds the iRacing-shaped Session object from an LMU session snapshot.
  * Fields with no LMU equivalent keep safe defaults so widgets degrade
@@ -69,9 +91,11 @@ function reasonOut(finishStatus: number): { id: number; str: string } {
  */
 export function mapLmuSession(
   raw: Raw,
-  trackMap?: LmuTrackMap | null
+  trackMap?: LmuTrackMap | null,
+  pitSpeedLimitMs?: number
 ): Session {
   const trackLengthM = raw.lapDist;
+  const shiftLights = deriveLmuShiftLightRpm(raw.engineMaxRPM);
 
   /**
    * LMU has no class relative speed. Rank classes by their estimated lap time
@@ -110,7 +134,8 @@ export function mapLmuSession(
     CarClassID: d.classId,
     CarID: resolveLmuCarId(d.vehicleModel ?? d.vehicleName),
     CarIsPaceCar: 0,
-    CarIsAI: 0,
+    CarIsAI: isLmuAiControlled(d.control) ? 1 : 0,
+    CarIsAIControlled: isLmuAiControlled(d.control),
     CarIsElectric: 0,
     CarScreenName: d.vehicleName,
     CarScreenNameShort: d.vehicleName.split(' ')[0] ?? '',
@@ -272,7 +297,10 @@ export function mapLmuSession(
       TrackLongitude: '',
       TrackNorthOffset: '',
       TrackNumTurns: 0,
-      TrackPitSpeedLimit: '',
+      TrackPitSpeedLimit:
+        pitSpeedLimitMs !== undefined
+          ? `${(pitSpeedLimitMs * 3.6).toFixed(2)} kph`
+          : '',
       TrackPaceSpeed: '0',
       TrackNumPitStalls: 0,
       TrackType: '',
@@ -398,7 +426,12 @@ export function mapLmuSession(
       DriverHeadPosZ: 0,
       DriverCarIsElectric: 0,
       DriverCarIdleRPM: 800,
-      DriverCarRedLine: raw.engineMaxRPM ?? 8500,
+      DriverCarRedLine:
+        raw.engineMaxRPM !== undefined &&
+        Number.isFinite(raw.engineMaxRPM) &&
+        raw.engineMaxRPM > 0
+          ? raw.engineMaxRPM
+          : DEFAULT_MAX_RPM,
       DriverCarEngCylinderCount: 0,
       DriverCarFuelKgPerLtr: 0,
       DriverCarFuelMaxLtr: raw.fuelCapacity ?? 0,
@@ -406,10 +439,10 @@ export function mapLmuSession(
       DriverCarGearNumForward: raw.maxGears ?? 6,
       DriverCarGearNeutral: 0,
       DriverCarGearReverse: -1,
-      DriverCarSLFirstRPM: 0,
-      DriverCarSLShiftRPM: raw.engineMaxRPM ?? 8500,
-      DriverCarSLLastRPM: raw.engineMaxRPM ?? 8500,
-      DriverCarSLBlinkRPM: raw.engineMaxRPM ?? 8500,
+      DriverCarSLFirstRPM: shiftLights.first,
+      DriverCarSLShiftRPM: shiftLights.shift,
+      DriverCarSLLastRPM: shiftLights.last,
+      DriverCarSLBlinkRPM: shiftLights.blink,
       DriverCarVersion: '',
       DriverPitTrkPct: 0,
       DriverCarEstLapTime: playerDriver?.estimatedLapTime ?? 0,

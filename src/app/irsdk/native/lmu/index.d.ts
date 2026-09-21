@@ -5,6 +5,8 @@ export type LmuVec = number[];
 export interface LmuRawVehicle {
   id: number;
   isPlayer: boolean;
+  /** LMU mControl: 0 local player, 1 local AI, 2 remote, 3 replay. */
+  control?: number;
   name: string;
   vehicleName: string;
   vehicleModel?: string;

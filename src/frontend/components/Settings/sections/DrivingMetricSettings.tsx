@@ -206,32 +206,132 @@ export function DrivingMetricSettings<K extends DrivingMetricId>({
             </SettingsSection>
           )}
           {id === 'tyrepanel' && (
-            <SettingsSection title="Units">
-              <SettingToggleRow
-                title="Use Fahrenheit"
-                enabled={
-                  (settings.config as WidgetConfigMap['tyrepanel'])
-                    .temperatureUnit === 'F'
-                }
-                onToggle={(enabled) =>
-                  handleConfigChange({
-                    temperatureUnit: enabled ? 'F' : 'C',
-                  } as unknown as Partial<WidgetConfigMap[K]>)
-                }
-              />
-              <SettingToggleRow
-                title="Use PSI"
-                enabled={
-                  (settings.config as WidgetConfigMap['tyrepanel'])
-                    .pressureUnit === 'psi'
-                }
-                onToggle={(enabled) =>
-                  handleConfigChange({
-                    pressureUnit: enabled ? 'psi' : 'kPa',
-                  } as unknown as Partial<WidgetConfigMap[K]>)
-                }
-              />
-            </SettingsSection>
+            <>
+              <SettingsSection title="Units">
+                <SettingToggleRow
+                  title="Use Fahrenheit"
+                  enabled={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .temperatureUnit === 'F'
+                  }
+                  onToggle={(enabled) =>
+                    handleConfigChange({
+                      temperatureUnit: enabled ? 'F' : 'C',
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+                <SettingToggleRow
+                  title="Use PSI"
+                  enabled={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .pressureUnit === 'psi'
+                  }
+                  onToggle={(enabled) =>
+                    handleConfigChange({
+                      pressureUnit: enabled ? 'psi' : 'kPa',
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+              </SettingsSection>
+              <SettingsSection title="Temperature bands">
+                <SettingNumberRow
+                  title="Cold below"
+                  description="Temperature in °C. Display-unit changes do not alter thresholds."
+                  value={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .temperatureThresholds?.cold ?? 70
+                  }
+                  min={0}
+                  max={
+                    ((settings.config as WidgetConfigMap['tyrepanel'])
+                      .temperatureThresholds?.hot ?? 100) - 1
+                  }
+                  step={1}
+                  onChange={(cold) =>
+                    handleConfigChange({
+                      temperatureThresholds: {
+                        cold,
+                        hot:
+                          (settings.config as WidgetConfigMap['tyrepanel'])
+                            .temperatureThresholds?.hot ?? 100,
+                      },
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+                <SettingNumberRow
+                  title="Hot above"
+                  value={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .temperatureThresholds?.hot ?? 100
+                  }
+                  min={
+                    ((settings.config as WidgetConfigMap['tyrepanel'])
+                      .temperatureThresholds?.cold ?? 70) + 1
+                  }
+                  max={200}
+                  step={1}
+                  onChange={(hot) =>
+                    handleConfigChange({
+                      temperatureThresholds: {
+                        cold:
+                          (settings.config as WidgetConfigMap['tyrepanel'])
+                            .temperatureThresholds?.cold ?? 70,
+                        hot,
+                      },
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+              </SettingsSection>
+              <SettingsSection title="Tread bands">
+                <SettingNumberRow
+                  title="Worn at or below"
+                  description="Remaining tread percentage."
+                  value={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .wearThresholds?.worn ?? 60
+                  }
+                  min={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .wearThresholds?.replace ?? 30
+                  }
+                  max={100}
+                  step={1}
+                  onChange={(worn) =>
+                    handleConfigChange({
+                      wearThresholds: {
+                        worn,
+                        replace:
+                          (settings.config as WidgetConfigMap['tyrepanel'])
+                            .wearThresholds?.replace ?? 30,
+                      },
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+                <SettingNumberRow
+                  title="Replace at or below"
+                  value={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .wearThresholds?.replace ?? 30
+                  }
+                  min={0}
+                  max={
+                    (settings.config as WidgetConfigMap['tyrepanel'])
+                      .wearThresholds?.worn ?? 60
+                  }
+                  step={1}
+                  onChange={(replace) =>
+                    handleConfigChange({
+                      wearThresholds: {
+                        worn:
+                          (settings.config as WidgetConfigMap['tyrepanel'])
+                            .wearThresholds?.worn ?? 60,
+                        replace,
+                      },
+                    } as unknown as Partial<WidgetConfigMap[K]>)
+                  }
+                />
+              </SettingsSection>
+            </>
           )}
           {id === 'cruiseodometer' && (
             <SettingsSection title="Units">

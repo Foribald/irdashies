@@ -37,6 +37,13 @@ export function lmuGroundPosition(
   return finite(x) && finite(z) ? { x, y: -z } : null;
 }
 
+// Canvas y grows downward, so a counter-clockwise turn on screen is (x, y) -> (y, -x).
+export const rotateLmuMapPointCounterClockwise = <
+  T extends { x: number; y: number },
+>(
+  point: T
+): T => ({ ...point, x: point.y, y: -point.x });
+
 function interpolatePoint(
   points: readonly RecordedPoint[],
   distance: number
@@ -59,7 +66,9 @@ export function normalizeLmuTrackMap(
   trackLength: number
 ): LmuTrackMap {
   const points = Array.from({ length: RESAMPLED_POINTS }, (_, index) =>
-    interpolatePoint(recorded, (trackLength * index) / RESAMPLED_POINTS)
+    rotateLmuMapPointCounterClockwise(
+      interpolatePoint(recorded, (trackLength * index) / RESAMPLED_POINTS)
+    )
   );
   const minX = Math.min(...points.map((point) => point.x));
   const maxX = Math.max(...points.map((point) => point.x));
@@ -81,6 +90,7 @@ export function normalizeLmuTrackMap(
   const first = normalized[0];
 
   return {
+    orientation: 'lmu-ccw-v1',
     active: {
       inside: `${inside} Z`,
       outside: `${inside} Z`,
@@ -267,6 +277,7 @@ export class LmuTrackMapRecorder {
 const isTrackMap = (value: unknown): value is LmuTrackMap => {
   const map = value as LmuTrackMap;
   return (
+    map?.orientation === 'lmu-ccw-v1' &&
     !!map?.active?.inside &&
     map.active.trackPathPoints?.length >= MIN_RECORDED_POINTS &&
     map.startFinish?.direction === 'anticlockwise'

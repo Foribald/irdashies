@@ -190,6 +190,16 @@ describe('mapLmuTelemetry', () => {
     expect(t.RRshockDefl.value[0]).toBe(0.07);
   });
 
+  it('maps the LMU pit limiter switch, not only active intervention', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      speedLimiter: 1,
+      speedLimiterActive: false,
+    });
+
+    expect(t.dcPitSpeedLimiterToggle.value[0]).toBe(true);
+  });
+
   it('handles the no-player case', () => {
     const rest: Record<string, unknown> = { ...fixture() };
     delete rest.speed;

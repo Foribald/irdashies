@@ -976,6 +976,14 @@ export interface StintHistoryConfig extends CompactTelemetryWidgetConfig {
 export interface TyrePanelConfig extends CompactTelemetryWidgetConfig {
   pressureUnit: 'kPa' | 'psi';
   temperatureUnit: 'C' | 'F';
+  temperatureThresholds: {
+    cold: number;
+    hot: number;
+  };
+  wearThresholds: {
+    worn: number;
+    replace: number;
+  };
 }
 
 export interface CruiseOdometerConfig extends CompactTelemetryWidgetConfig {
