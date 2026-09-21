@@ -1,5 +1,6 @@
 import {
   CarLeftRight,
+  EngineWarnings,
   GlobalFlags,
   SessionState,
   type Telemetry,
@@ -61,6 +62,26 @@ const PHASE_TO_SESSION_STATE: Record<number, number> = {
   9: SessionState.Racing,
 };
 
+/**
+ * iRacing publishes exactly 32767 laps remaining for a session with no lap
+ * limit, and the fuel calculator tests for that literal to pick its timed-race
+ * branch (`sessionLapsRemain === TIMED_RACE_LAPS_REMAINING`). Anything else --
+ * LMU's `mMaxLaps - completed`, or the 0 a missing limit produced -- silently
+ * takes the lap-race path and estimates the race ends within the current lap.
+ */
+export const LMU_TIMED_SESSION_LAPS_REMAIN = 32767;
+
+/**
+ * True when the session runs to a lap count rather than to a clock. LMU marks
+ * "no lap limit" with a sentinel rather than a flag, and which sentinel varies
+ * (0 when the limit is absent, a very large int when it is "unlimited"), so
+ * treat only a plausible, positive count as a real limit.
+ */
+export const lmuIsLapLimited = (maxLaps: number | undefined): boolean =>
+  typeof maxLaps === 'number' &&
+  maxLaps > 0 &&
+  maxLaps < LMU_TIMED_SESSION_LAPS_REMAIN;
+
 /** iRacing's sentinel for a slot with no car in it. */
 const TRACK_NOT_IN_WORLD = -1;
 const TRACK_IN_PIT_STALL = 1;
@@ -68,6 +89,13 @@ const TRACK_APPROACHING_PITS = 2;
 const TRACK_ON_TRACK = 4;
 
 const num = (v: number | undefined) => ({ value: [v ?? 0] });
+/**
+ * A channel LMU does not publish at all. An empty value array reads back as
+ * `undefined` through the processors' `numberValue` helpers, which is what the
+ * widgets test for -- `num(0)` would instead present a fabricated zero as a
+ * real reading.
+ */
+const absent = () => ({ value: [] as number[] });
 const bool = (v: boolean | number | undefined) => ({ value: [Boolean(v)] });
 const numArr = (v: ArrayLike<number> | undefined) => ({
   value: v ? Array.from(v) : [],
@@ -213,19 +241,25 @@ export function mapLmuTelemetry(
   t.SessionTime = num(sessionClock);
   t.SessionTimeRemain = num(raw.sessionTimeRemaining);
   t.SessionTimeTotal = num(raw.endET);
+  const lapLimited = lmuIsLapLimited(raw.maxLaps);
   t.SessionLapsRemain = num(
-    raw.maxLaps > 0
+    lapLimited
       ? Math.max(
           0,
           raw.maxLaps -
             (playerIdx >= 0 ? (raw.vehTotalLaps[playerIdx] ?? 0) : 0)
         )
-      : 0
+      : LMU_TIMED_SESSION_LAPS_REMAIN
   );
-  t.SessionLapsTotal = num(raw.maxLaps);
+  t.SessionLapsTotal = num(
+    lapLimited ? raw.maxLaps : LMU_TIMED_SESSION_LAPS_REMAIN
+  );
   t.SessionTimeOfDay = num(raw.timeOfDay);
   t.SessionFlags = num(sessionFlags(raw));
-  t.DisplayUnits = num(0);
+  // 1 = metric. LMU publishes no units setting, and 0 (iRacing's imperial) fed
+  // every widget resolving a speed unit from 'auto' -- mph and degrees F in a
+  // metric-native sim. Per-widget overrides still win.
+  t.DisplayUnits = num(1);
   t.IsReplayPlaying = bool(false);
   t.ReplayFrameNum = num(0);
   t.ReplayFrameNumEnd = num(0);
@@ -241,8 +275,11 @@ export function mapLmuTelemetry(
   );
   t.PlayerTireCompound = num(0);
   t.PlayerFastRepairsUsed = num(0);
+  // No player car (menus, garage, spectating) is NOT_IN_WORLD, matching the
+  // sentinel CarIdxTrackSurface already uses for an empty slot. ON_TRACK here
+  // told TrackStateProcessor and the lap log the player was driving.
   t.PlayerTrackSurface = num(
-    playerIdx >= 0 ? trackLocation(raw, playerIdx) : TRACK_ON_TRACK
+    playerIdx >= 0 ? trackLocation(raw, playerIdx) : TRACK_NOT_IN_WORLD
   );
   t.PlayerCarPosition = num(raw.vehPlaces[playerIdx] ?? 0);
   t.PlayerCarClass = num(raw.vehClass[playerIdx] ?? 0);
@@ -339,7 +376,7 @@ export function mapLmuTelemetry(
   // Clutch 1.0 with the pedal up. LMU's mFilteredClutch is the pedal, 0.0
   // released, and useInputs inverts whatever it is given -- so a pass-through
   // showed a full clutch bar at rest. Throttle and brake need no flip; both
-  // conventions agree that 0 is off.
+  // conventions agree that 0 is off. ClutchRaw below takes the same flip.
   t.Clutch = num(1 - (raw.filteredClutch ?? 0));
   t.Gear = num(raw.gear);
   t.RPM = num(raw.engineRPM);
@@ -373,8 +410,19 @@ export function mapLmuTelemetry(
   };
   t.LmuSectorIdx = num(sectorIdx(raw.vehSector?.[playerIdx]));
   t.Speed = num(raw.speed);
-  t.Yaw = num(0);
-  t.YawNorth = num(0);
+  const playerYaw =
+    playerIdx >= 0 &&
+    raw.vehOriX?.[playerIdx] !== undefined &&
+    raw.vehOriZ?.[playerIdx] !== undefined
+      ? Math.atan2(raw.vehOriX[playerIdx], raw.vehOriZ[playerIdx])
+      : 0;
+  // Heading, from the same atan2(oriX, oriZ) the blind-spot monitor already
+  // derives in proximity.ts, so both read the orientation basis the same way.
+  // Only the difference WindDir - YawNorth is ever displayed, so the absolute
+  // north reference cancels and LMU's own frame is enough.
+  t.Yaw = num(playerYaw);
+  t.YawNorth = num(playerYaw);
+  // Pitch and roll have no consumer; LMU publishes no attitude anyway.
   t.Pitch = num(0);
   t.Roll = num(0);
   t.SteeringWheelAngleMax = num(steeringMaxRad);
@@ -416,9 +464,15 @@ export function mapLmuTelemetry(
   t.WindVel = num(
     Math.hypot(raw.wind[0] ?? 0, raw.wind[1] ?? 0, raw.wind[2] ?? 0)
   );
-  t.WindDir = num(0);
-  t.RelativeHumidity = num(0);
-  t.FogLevel = num(0);
+  // mWind is a velocity vector: it points where the wind is BLOWING TO, while
+  // iRacing's WindDir is the bearing it blows FROM -- hence the half turn. Read
+  // in the same atan2(x, z) frame as YawNorth above, since WindItem and the
+  // Weather widget render WindDir - YawNorth and nothing else.
+  t.WindDir = num(Math.atan2(raw.wind[0] ?? 0, raw.wind[2] ?? 0) + Math.PI);
+  // LMU publishes neither. WeatherHumidity renders "- %" for an absent value,
+  // so 0 was inventing a reading; FogLevel has no consumer either way.
+  t.RelativeHumidity = absent();
+  t.FogLevel = absent();
   t.Precipitation = num(raw.raining);
   t.WeatherDeclaredWet = bool(raw.raining > 0);
 
@@ -429,11 +483,18 @@ export function mapLmuTelemetry(
   t.FuelLevelPct = num(
     raw.fuelCapacity && raw.fuel !== undefined ? raw.fuel / raw.fuelCapacity : 0
   );
-  t.EngineWarnings = num(0);
+  // Only the limiter bit is knowable. usePitLimiterWarning tests it to tell an
+  // auto-limiter series from a manual one; a flat 0 meant that check never
+  // fired even though speedLimiterActive was right there.
+  t.EngineWarnings = num(
+    raw.speedLimiterActive ? EngineWarnings.PitSpeedLimiter : 0
+  );
   t.ShiftGrindRPM = num(raw.engineMaxRPM ?? 0);
   t.ThrottleRaw = num(raw.unfilteredThrottle);
   t.BrakeRaw = num(raw.unfilteredBrake);
-  t.ClutchRaw = num(raw.unfilteredClutch);
+  // Same engagement flip as Clutch above: the Input widget reads ClutchRaw
+  // instead of Clutch when "raw values" is on, and inverts it either way.
+  t.ClutchRaw = num(1 - (raw.unfilteredClutch ?? 0));
   t.BrakeABSactive = bool(raw.absActive);
   t.dcBrakeBias = num(
     raw.rearBrakeBias === undefined ? 0 : 1 - raw.rearBrakeBias
@@ -451,9 +512,12 @@ export function mapLmuTelemetry(
   // Defaults for everything not meaningful in LMU (pit service, radios, FFB,
   // tyre models, dash controls...). Kept long but explicit so the shape stays
   // stable if slots get consumed later.
-  t.RadioTransmitCarIdx = num(0);
-  t.RadioTransmitRadioIdx = num(0);
-  t.RadioTransmitFrequencyIdx = num(0);
+  // -1, not 0: iRacing's idle value is -1, and RadioProcessor treats any index
+  // >= 0 as someone transmitting. A hardcoded 0 is a real car index, so it hung
+  // a permanent speaker icon on whoever sat in slot 0. LMU has no radio chat.
+  t.RadioTransmitCarIdx = num(-1);
+  t.RadioTransmitRadioIdx = num(-1);
+  t.RadioTransmitFrequencyIdx = num(-1);
   t.PushToTalk = bool(false);
   t.PushToPass = bool(false);
   t.PitOptRepairLeft = num(0);

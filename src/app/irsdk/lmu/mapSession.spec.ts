@@ -357,4 +357,21 @@ describe('mapLmuSession', () => {
     const s = mapLmuSession({ ...fixture(), session });
     expect(s.SessionInfo.Sessions[0].SessionType).toBe(expected);
   });
+
+  it('calls a session with no lap limit unlimited, as iRacing does', () => {
+    // FuelProjectionProcessor parses SessionLaps as the configured lap count.
+    // LMU's sentinel for "no limit" parsed as a real, enormous limit.
+    expect(
+      mapLmuSession({ ...fixture(), maxLaps: 0 }).SessionInfo.Sessions[0]
+        .SessionLaps
+    ).toBe('unlimited');
+    expect(
+      mapLmuSession({ ...fixture(), maxLaps: 2147483647 }).SessionInfo
+        .Sessions[0].SessionLaps
+    ).toBe('unlimited');
+    // A real limit is still reported as a number.
+    expect(mapLmuSession(fixture()).SessionInfo.Sessions[0].SessionLaps).toBe(
+      '12'
+    );
+  });
 });

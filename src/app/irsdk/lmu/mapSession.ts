@@ -12,6 +12,7 @@ import {
   type LmuRankEntry,
 } from './positions';
 import { resolveLmuTrackId } from './trackId';
+import { lmuIsLapLimited } from './mapTelemetry';
 
 type Raw = import('../native/lmu').LmuRawSession;
 type RawVehicle = import('../native/lmu').LmuRawVehicle;
@@ -354,7 +355,12 @@ export function mapLmuSession(
       Sessions: [
         {
           SessionNum: raw.session,
-          SessionLaps: `${raw.maxLaps}`,
+          // iRacing's string for a session with no lap limit. A raw sentinel
+          // here parsed as a real lap count and drove the fuel calculator's
+          // race projection off a limit that does not exist.
+          SessionLaps: lmuIsLapLimited(raw.maxLaps)
+            ? `${raw.maxLaps}`
+            : 'unlimited',
           SessionTime: '',
           SessionNumLapsToAvg: 0,
           SessionType: currentSessionType,

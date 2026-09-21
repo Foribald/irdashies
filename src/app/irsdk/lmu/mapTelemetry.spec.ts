@@ -197,6 +197,9 @@ describe('mapLmuTelemetry', () => {
     expect(t.Speed.value[0]).toBe(0);
     expect(t.OnPitRoad.value[0]).toBe(false);
     expect(t.IsOnTrack.value[0]).toBe(false);
+    // NOT_IN_WORLD, the sentinel CarIdxTrackSurface already uses for an empty
+    // slot. ON_TRACK told TrackStateProcessor the player was out driving.
+    expect(t.PlayerTrackSurface.value[0]).toBe(-1);
   });
 
   it('maps per-car arrays by slot', () => {
@@ -231,10 +234,28 @@ describe('mapLmuTelemetry', () => {
     const pressed = mapLmuTelemetry({ ...fixture(), filteredClutch: 1 });
     expect(pressed.Clutch.value[0]).toBe(0);
 
+    // ClutchRaw needs the identical flip: the Input widget reads it instead of
+    // Clutch when "raw values" is enabled, and inverts it just the same.
+    const rawReleased = mapLmuTelemetry({ ...fixture(), unfilteredClutch: 0 });
+    expect(rawReleased.ClutchRaw.value[0]).toBe(1);
+
+    const rawPressed = mapLmuTelemetry({ ...fixture(), unfilteredClutch: 1 });
+    expect(rawPressed.ClutchRaw.value[0]).toBe(0);
+
     // Throttle and brake share the 0 = off convention and must not be flipped.
     const t = mapLmuTelemetry(fixture());
     expect(t.Throttle.value[0]).toBeCloseTo(0.79);
     expect(t.Brake.value[0]).toBe(0);
+    expect(t.ThrottleRaw.value[0]).toBeCloseTo(0.8);
+    expect(t.BrakeRaw.value[0]).toBe(0);
+  });
+
+  it('reports nobody on the radio, since LMU has no radio chat', () => {
+    // RadioProcessor reads any index >= 0 as someone transmitting, so the old
+    // hardcoded 0 pinned a speaker icon on whoever held car index 0. iRacing's
+    // idle value is -1.
+    const t = mapLmuTelemetry(fixture());
+    expect(t.RadioTransmitCarIdx.value[0]).toBe(-1);
   });
 
   it('ranks class positions, 1-based, from the same order as the session', () => {
@@ -345,6 +366,68 @@ describe('mapLmuTelemetry', () => {
   it('computes wind magnitude', () => {
     const t = mapLmuTelemetry(fixture());
     expect(t.WindVel.value[0]).toBeCloseTo(Math.hypot(2, 0, -3));
+  });
+
+  it('gives the wind a bearing, in the same frame as the car heading', () => {
+    // Every widget renders WindDir - YawNorth and nothing else, so the two must
+    // agree; a hardcoded 0 for both drew a fixed arrow that read as a bearing.
+    // mWind points where the wind blows TO, iRacing's WindDir where it blows
+    // FROM, hence the half turn.
+    const t = mapLmuTelemetry(fixture());
+    expect(t.WindDir.value[0]).toBeCloseTo(Math.atan2(2, -3) + Math.PI);
+    // Fixture car faces +Z: atan2(0, 1) = 0.
+    expect(t.YawNorth.value[0]).toBe(0);
+
+    // Turn the car to face +X and the relative bearing swings with it.
+    const turned = mapLmuTelemetry({
+      ...fixture(),
+      vehOriX: new Float64Array([1, 1, 1]),
+      vehOriZ: new Float64Array([0, 0, 0]),
+    } as unknown as LmuRawTelemetry);
+    expect(turned.YawNorth.value[0]).toBeCloseTo(Math.PI / 2);
+    expect(turned.WindDir.value[0]).toBeCloseTo(Math.atan2(2, -3) + Math.PI);
+  });
+
+  it('leaves humidity and fog absent rather than reporting zero', () => {
+    // LMU publishes neither. WeatherHumidity renders "- %" for undefined, so an
+    // empty value array is honest where num(0) invented a 0% reading.
+    const t = mapLmuTelemetry(fixture());
+    expect(t.RelativeHumidity.value).toEqual([]);
+    expect(t.FogLevel.value).toEqual([]);
+  });
+
+  it('flags a timed race with iRacing 32767, not a derived lap count', () => {
+    // The fuel calculator picks its timed-race branch on the literal 32767.
+    // LMU marks "no lap limit" with a sentinel instead, and which one varies:
+    // 0 when absent, a huge int when "unlimited". Both used to pass straight
+    // through -- 0 told the calculator the race ended inside the current lap.
+    const absent = mapLmuTelemetry({ ...fixture(), maxLaps: 0 });
+    expect(absent.SessionLapsRemain.value[0]).toBe(32767);
+    expect(absent.SessionLapsTotal.value[0]).toBe(32767);
+
+    const unlimited = mapLmuTelemetry({ ...fixture(), maxLaps: 2147483647 });
+    expect(unlimited.SessionLapsRemain.value[0]).toBe(32767);
+
+    // A real lap limit still counts down. Fixture player has 3 of 12 laps.
+    const limited = mapLmuTelemetry(fixture());
+    expect(limited.SessionLapsRemain.value[0]).toBe(9);
+    expect(limited.SessionLapsTotal.value[0]).toBe(12);
+  });
+
+  it('reports metric units, not iRacing imperial', () => {
+    // LMU has no units setting and is metric-native; 0 gave every 'auto' widget
+    // mph. Per-widget overrides still win.
+    expect(mapLmuTelemetry(fixture()).DisplayUnits.value[0]).toBe(1);
+  });
+
+  it('raises the pit limiter bit so auto-limiter detection can fire', () => {
+    // usePitLimiterWarning tests EngineWarnings.PitSpeedLimiter (0x10) to tell
+    // an auto-limiter series from a manual one.
+    const off = mapLmuTelemetry(fixture());
+    expect(off.EngineWarnings.value[0]).toBe(0);
+
+    const on = mapLmuTelemetry({ ...fixture(), speedLimiterActive: true });
+    expect(on.EngineWarnings.value[0]).toBe(0x10);
   });
 
   it('maps LMU race flags', () => {
