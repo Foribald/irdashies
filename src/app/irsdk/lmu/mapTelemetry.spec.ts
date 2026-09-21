@@ -123,8 +123,11 @@ function fixture(): LmuRawTelemetry {
 describe('mapLmuTelemetry', () => {
   it('maps session scalars', () => {
     const t = mapLmuTelemetry(fixture());
-    expect(t.SessionTick.value[0]).toBe(1250.5);
-    expect(t.SessionTime.value[0]).toBe(1250.5);
+    // Both clocks follow the player's 100 Hz mElapsedTime (250.4), not the 5 Hz
+    // scoring mCurrentET (1250.5). LapTrace timestamps every sample with
+    // SessionTime, so the coarse clock quantised the whole trace.
+    expect(t.SessionTick.value[0]).toBe(250.4);
+    expect(t.SessionTime.value[0]).toBe(250.4);
     expect(t.SessionTimeTotal.value[0]).toBe(3600);
     expect(t.SessionTimeRemain.value[0]).toBe(2349.5);
     expect(t.SessionLapsTotal.value[0]).toBe(12);
@@ -207,6 +210,31 @@ describe('mapLmuTelemetry', () => {
     expect(t.CarIdxBestLapTime.value).toEqual([134.5, 132.8, 137.1]);
     expect(t.CarIdxOnPitRoad.value).toEqual([false, false, true]);
     expect(t.CarIdxTrackSurface.value).toEqual([4, 4, 1]);
+  });
+
+  it('falls back to the scoring clock when there is no player car', () => {
+    // mElapsedTime is only published for a player vehicle; spectating or sitting
+    // in the garage must not leave the session clock at 0.
+    const raw: Record<string, unknown> = { ...fixture() };
+    delete raw.elapsedTime;
+    const t = mapLmuTelemetry(raw as unknown as LmuRawTelemetry);
+    expect(t.SessionTime.value[0]).toBe(1250.5);
+  });
+
+  it('reports the clutch in iRacing engagement terms, not pedal travel', () => {
+    // iRacing's Clutch is 1.0 with the pedal UP, and the Input widget inverts
+    // what it receives. LMU's mFilteredClutch is the pedal, so passing it
+    // through showed a full clutch bar at rest.
+    const released = mapLmuTelemetry({ ...fixture(), filteredClutch: 0 });
+    expect(released.Clutch.value[0]).toBe(1);
+
+    const pressed = mapLmuTelemetry({ ...fixture(), filteredClutch: 1 });
+    expect(pressed.Clutch.value[0]).toBe(0);
+
+    // Throttle and brake share the 0 = off convention and must not be flipped.
+    const t = mapLmuTelemetry(fixture());
+    expect(t.Throttle.value[0]).toBeCloseTo(0.79);
+    expect(t.Brake.value[0]).toBe(0);
   });
 
   it('ranks class positions, 1-based, from the same order as the session', () => {

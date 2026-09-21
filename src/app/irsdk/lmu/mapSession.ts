@@ -11,6 +11,7 @@ import {
   rankLmuEntries,
   type LmuRankEntry,
 } from './positions';
+import { resolveLmuTrackId } from './trackId';
 
 type Raw = import('../native/lmu').LmuRawSession;
 type RawVehicle = import('../native/lmu').LmuRawVehicle;
@@ -249,12 +250,19 @@ export function mapLmuSession(
   return {
     WeekendInfo: {
       TrackName: raw.trackName,
-      TrackID: 0,
+      // Synthetic but stable and per-track. A hardcoded 0 read as "track
+      // unknown" and switched LapTrace off entirely; a small positive id would
+      // have indexed the bundled iRacing drawings and drawn the wrong circuit.
+      TrackID: resolveLmuTrackId(raw.trackName),
       TrackLength: `${trackLengthM} m`,
       TrackLengthOfficial: `${trackLengthM} m`,
       TrackDisplayName: raw.trackName,
       TrackDisplayShortName: raw.trackName,
-      TrackConfigName: null,
+      // Re-arms the wrong-circuit rejection in adaptStoredRecord, which was
+      // skipped while this was null. With ids now hashed, that is the backstop
+      // that turns a hash collision into "no ghost lap" rather than another
+      // circuit's ghost lap.
+      TrackConfigName: raw.trackName || null,
       TrackCity: '',
       TrackState: 'green',
       TrackCountry: '',

@@ -140,12 +140,24 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   const steeringMaxRad = ((raw.visualSteeringWheelRange ?? 0) * Math.PI) / 360;
   const relativePositions = deriveLmuRelativePositions(raw);
 
-  // Session-level
-  t.SessionTick = num(raw.currentET);
+  // Session-level.
+  //
+  // Both clocks come from the player's mElapsedTime, measured at 100 Hz, rather
+  // than scoring's mCurrentET at 5 Hz. They are the same quantity -- seconds
+  // since session start -- sampled 20x apart, so this is precision, not
+  // semantics. It matters because LapTrace timestamps every sample with
+  // SessionTime, and ProcessorHost reads SessionTick as its frame clock.
+  // mElapsedTime is absent with no player car (spectating, garage), hence the
+  // fallback.
+  const sessionClock =
+    typeof raw.elapsedTime === 'number' && raw.elapsedTime >= 0
+      ? raw.elapsedTime
+      : raw.currentET;
+  t.SessionTick = num(sessionClock);
   t.SessionNum = num(raw.session);
   t.SessionUniqueID = num(raw.session);
   t.SessionState = num(PHASE_TO_SESSION_STATE[raw.gamePhase] ?? 0);
-  t.SessionTime = num(raw.currentET);
+  t.SessionTime = num(sessionClock);
   t.SessionTimeRemain = num(raw.sessionTimeRemaining);
   t.SessionTimeTotal = num(raw.endET);
   t.SessionLapsRemain = num(
@@ -258,7 +270,12 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);
   t.Throttle = num(raw.filteredThrottle);
   t.Brake = num(raw.filteredBrake);
-  t.Clutch = num(raw.filteredClutch);
+  // iRacing's Clutch is ENGAGEMENT, not pedal travel: a captured session reads
+  // Clutch 1.0 with the pedal up. LMU's mFilteredClutch is the pedal, 0.0
+  // released, and useInputs inverts whatever it is given -- so a pass-through
+  // showed a full clutch bar at rest. Throttle and brake need no flip; both
+  // conventions agree that 0 is off.
+  t.Clutch = num(1 - (raw.filteredClutch ?? 0));
   t.Gear = num(raw.gear);
   t.RPM = num(raw.engineRPM);
   t.Lap = num(raw.lapNumber);

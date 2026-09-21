@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LmuRawSession } from '../native/lmu';
 import { mapLmuSession, resolveLmuCarId } from './mapSession';
+import { LMU_TRACK_ID_BASE, resolveLmuTrackId } from './trackId';
 
 function fixture(): LmuRawSession {
   return {
@@ -150,7 +151,9 @@ describe('mapLmuSession', () => {
   it('maps weekend info', () => {
     const s = mapLmuSession(fixture());
     expect(s.WeekendInfo.TrackName).toBe('Spa Francorchamps');
-    expect(s.WeekendInfo.TrackID).toBe(0);
+    expect(s.WeekendInfo.TrackID).toBe(resolveLmuTrackId('Spa Francorchamps'));
+    // Populated so the wrong-circuit guard in adaptStoredRecord can fire.
+    expect(s.WeekendInfo.TrackConfigName).toBe('Spa Francorchamps');
     expect(s.WeekendInfo.TrackDisplayName).toBe('Spa Francorchamps');
     expect(s.WeekendInfo.TrackLength).toBe('7004 m');
     expect(s.WeekendInfo.SubSessionID).toBe(2);
@@ -302,9 +305,22 @@ describe('mapLmuSession', () => {
   });
 
   it('does not guess an iRacing map id from an LMU track name', () => {
+    // The intent is unchanged: the id must never land on a bundled iRacing
+    // drawing. It is no longer 0, because four guards read a non-positive id as
+    // "track unknown" and switched LapTrace off — but it stays far above the
+    // drawing range, so tracks[id] is undefined exactly as before.
     const s = mapLmuSession({ ...fixture(), trackName: 'Lusail' });
     expect(s.WeekendInfo.TrackName).toBe('Lusail');
+    expect(s.WeekendInfo.TrackID).toBeGreaterThanOrEqual(LMU_TRACK_ID_BASE);
+    expect(s.WeekendInfo.TrackID).not.toBe(
+      resolveLmuTrackId('Spa Francorchamps')
+    );
+  });
+
+  it('gives a track with no name yet the sentinel the guards reject', () => {
+    const s = mapLmuSession({ ...fixture(), trackName: '' });
     expect(s.WeekendInfo.TrackID).toBe(0);
+    expect(s.WeekendInfo.TrackConfigName).toBeNull();
   });
 
   it('includes a recorded LMU track map when available', () => {
