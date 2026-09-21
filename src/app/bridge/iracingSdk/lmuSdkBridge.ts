@@ -40,19 +40,13 @@ import path from 'node:path';
  *
  * 8 ms rounds to a single tick (15.5 ms measured, 64 Hz). That is the ceiling
  * for a JS timer here; asking for 4 ms measured the same, and reaching 100 Hz
- * would need a native capture thread. Wasted polls are cheap because
- * `sdk.frameClock()` gates the work below.
+ * would need a native capture thread.
+ *
+ * Because the poll is slower than the writer, nearly every poll carries a new
+ * frame — the measured duplicate rate is 0.3%. So there is no gate on delivery:
+ * one would save almost nothing and can silence every consumer at once.
  */
 const TELEMETRY_POLL_INTERVAL = 8;
-
-/**
- * How long the frame clock may stand still before a full read happens anyway.
- *
- * Skipping work while the clock is unchanged also skips the running-state
- * check, so a stalled clock (sim paused, or gone) must not be able to suppress
- * disconnect detection indefinitely.
- */
-const FRAME_STALL_RECHECK_MS = 250;
 // Session snapshots are rebuilt from shared memory on demand; 2 Hz is plenty
 // for driver-grid changes and mirrors the iRacing bridge's session poll rate.
 const SESSION_POLL_INTERVAL = 500;
@@ -139,178 +133,132 @@ export async function publishIRacingSDKEvents(
     let lastInspectorTelemetryPublishTime = Number.NEGATIVE_INFINITY;
     let lastSessionPollTime = Number.NEGATIVE_INFINITY;
     let wasRunning = false;
-    // The player's telemetry clock for the frame last delivered. mElapsedTime
-    // advances once per published physics frame, which SME_UPDATE_TELEMETRY was
-    // measured not to do. Compared with !== rather than >, so a clock that
-    // resets when the session restarts still counts as new.
-    let lastFrameClock: number | undefined;
-    let lastFullReadTime = Number.NEGATIVE_INFINITY;
+    let consecutiveFailures = 0;
 
     while (!shouldStop) {
       const pollStartedAt = performance.now();
-      const shouldPollSession =
-        pollStartedAt - lastSessionPollTime >= SESSION_POLL_INTERVAL;
+      try {
+        const shouldPollSession =
+          pollStartedAt - lastSessionPollTime >= SESSION_POLL_INTERVAL;
 
-      // Polling faster than the sim publishes means most polls carry nothing.
-      // frameClock() is an 8-byte read off the mapped block, where read() copies
-      // 325 KB and builds a JS object of roughly forty per-car arrays, so
-      // checking first is what makes the higher poll rate affordable. A negative
-      // clock means there is no player car and nothing to compare, so read on.
-      const liveClock = sdk.frameClock();
-      const clockStalled =
-        liveClock >= 0 &&
-        lastFrameClock !== undefined &&
-        liveClock === lastFrameClock;
-      if (
-        clockStalled &&
-        !shouldPollSession &&
-        pollStartedAt - lastFullReadTime < FRAME_STALL_RECHECK_MS
-      ) {
-        await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            Math.max(
-              0,
-              TELEMETRY_POLL_INTERVAL - (performance.now() - pollStartedAt)
-            )
-          )
+        perfMetrics.markStart('processTelemetry');
+        perfMetrics.markStart(
+          shouldPollSession ? 'sdkSessionRead' : 'sdkTelemetryRead'
         );
-        continue;
-      }
-      // Reached only when a full read is about to happen, so this also paces the
-      // stalled-clock recheck: read now, then skip for up to FRAME_STALL_RECHECK_MS
-      // rather than reading on every poll for as long as the sim stays paused.
-      lastFullReadTime = pollStartedAt;
-
-      perfMetrics.markStart('processTelemetry');
-      perfMetrics.markStart(
-        shouldPollSession ? 'sdkSessionRead' : 'sdkTelemetryRead'
-      );
-      const rawSession = shouldPollSession ? sdk.readSession() : null;
-      const raw = rawSession ?? sdk.read();
-      perfMetrics.markEnd(
-        shouldPollSession ? 'sdkSessionRead' : 'sdkTelemetryRead'
-      );
-      if (!raw.running) {
-        perfMetrics.markEnd('processTelemetry');
-        if (wasRunning) {
-          logger.info('[lmuSdkBridge] LMU no longer publishing telemetry');
-          publishRunningState(false);
-          latestSession = null;
-          overlayManager.clearLatestSessionData?.();
-          lifecycle?._onDisconnect();
-          wasRunning = false;
-          lastSessionSignature = null;
+        const rawSession = shouldPollSession ? sdk.readSession() : null;
+        const raw = rawSession ?? sdk.read();
+        perfMetrics.markEnd(
+          shouldPollSession ? 'sdkSessionRead' : 'sdkTelemetryRead'
+        );
+        if (!raw.running) {
+          perfMetrics.markEnd('processTelemetry');
+          if (wasRunning) {
+            logger.info('[lmuSdkBridge] LMU no longer publishing telemetry');
+            publishRunningState(false);
+            latestSession = null;
+            overlayManager.clearLatestSessionData?.();
+            lifecycle?._onDisconnect();
+            wasRunning = false;
+            lastSessionSignature = null;
+          }
+          await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
+          if (shouldStop) break;
+          sdk.start();
+          continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
-        if (shouldStop) break;
-        sdk.start();
-        continue;
-      }
 
-      if (raw.trackName !== activeTrackName) {
-        activeTrackName = raw.trackName;
-        trackMap = mapStorage.load(activeTrackName);
-        if (!trackMap) {
-          const imported = findTinyPedalTrackMap(
-            activeTrackName,
-            tinyPedalTrackMapDirectories()
+        if (raw.trackName !== activeTrackName) {
+          activeTrackName = raw.trackName;
+          trackMap = mapStorage.load(activeTrackName);
+          if (!trackMap) {
+            const imported = findTinyPedalTrackMap(
+              activeTrackName,
+              tinyPedalTrackMapDirectories()
+            );
+            if (imported) {
+              trackMap = imported.map;
+              try {
+                mapStorage.save(activeTrackName, imported.map);
+                logger.info(
+                  `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${imported.filePath}`
+                );
+              } catch (error) {
+                logger.error(
+                  '[lmuSdkBridge] Failed to save imported track map',
+                  error
+                );
+              }
+            }
+          }
+          mapRecorder.reset(activeTrackName);
+          lastSessionSignature = null;
+          logger.info(
+            `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
           );
-          if (imported) {
-            trackMap = imported.map;
+        }
+        if (!trackMap) {
+          const recordedMap = mapRecorder.update(raw);
+          if (recordedMap) {
             try {
-              mapStorage.save(activeTrackName, imported.map);
+              mapStorage.save(activeTrackName, recordedMap);
+              trackMap = recordedMap;
+              lastSessionSignature = null;
               logger.info(
-                `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${imported.filePath}`
+                `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
               );
             } catch (error) {
-              logger.error(
-                '[lmuSdkBridge] Failed to save imported track map',
-                error
-              );
+              logger.error('[lmuSdkBridge] Failed to save track map', error);
             }
           }
         }
-        mapRecorder.reset(activeTrackName);
-        lastSessionSignature = null;
-        logger.info(
-          `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
-        );
-      }
-      if (!trackMap) {
-        const recordedMap = mapRecorder.update(raw);
-        if (recordedMap) {
-          try {
-            mapStorage.save(activeTrackName, recordedMap);
-            trackMap = recordedMap;
-            lastSessionSignature = null;
+
+        if (!wasRunning) {
+          logger.info(
+            `[lmuSdkBridge] LMU is running; version=${raw.gameVersion} session=${raw.session} phase=${raw.gamePhase} vehicles=${raw.numVehicles}/${raw.activeVehicles} player=${raw.playerVehicleIdx} trackLength=${raw.lapDist}`
+          );
+          wasRunning = true;
+          publishRunningState(true);
+          lifecycle?._onEnter({ replay: false });
+        }
+
+        const tickTime = performance.now();
+        let session: Session | null = null;
+        if (rawSession) {
+          lastSessionPollTime = tickTime;
+          const signature = lmuSessionSignature(rawSession);
+          if (signature !== lastSessionSignature) {
+            lastSessionSignature = signature;
+            session = mapLmuSession(rawSession, trackMap);
+            const playerIdx = rawSession.playerVehicleIdx;
             logger.info(
-              `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
+              `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
             );
-          } catch (error) {
-            logger.error('[lmuSdkBridge] Failed to save track map', error);
           }
         }
-      }
 
-      if (!wasRunning) {
-        logger.info(
-          `[lmuSdkBridge] LMU is running; version=${raw.gameVersion} session=${raw.session} phase=${raw.gamePhase} vehicles=${raw.numVehicles}/${raw.activeVehicles} player=${raw.playerVehicleIdx} trackLength=${raw.lapDist}`
-        );
-        wasRunning = true;
-        publishRunningState(true);
-        lifecycle?._onEnter({ replay: false });
-      }
-
-      const tickTime = performance.now();
-      let session: Session | null = null;
-      if (rawSession) {
-        lastSessionPollTime = tickTime;
-        const signature = lmuSessionSignature(rawSession);
-        if (signature !== lastSessionSignature) {
-          lastSessionSignature = signature;
-          session = mapLmuSession(rawSession, trackMap);
-          const playerIdx = rawSession.playerVehicleIdx;
-          logger.info(
-            `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
-          );
+        const blindSpotDataIssue =
+          mapLmuCarLeftRight(raw) === null
+            ? 'vehicle world positions or player orientation are unavailable'
+            : raw.lapDist <= 0
+              ? `track length is invalid (${raw.lapDist} m)`
+              : null;
+        if (blindSpotDataIssue !== lastBlindSpotDataIssue) {
+          lastBlindSpotDataIssue = blindSpotDataIssue;
+          if (blindSpotDataIssue) {
+            logger.warn(
+              `[lmuSdkBridge] Blind spot monitor unavailable: ${blindSpotDataIssue}`
+            );
+          } else {
+            logger.info('[lmuSdkBridge] Blind spot monitor data available');
+          }
         }
-      }
 
-      const blindSpotDataIssue =
-        mapLmuCarLeftRight(raw) === null
-          ? 'vehicle world positions or player orientation are unavailable'
-          : raw.lapDist <= 0
-            ? `track length is invalid (${raw.lapDist} m)`
-            : null;
-      if (blindSpotDataIssue !== lastBlindSpotDataIssue) {
-        lastBlindSpotDataIssue = blindSpotDataIssue;
-        if (blindSpotDataIssue) {
-          logger.warn(
-            `[lmuSdkBridge] Blind spot monitor unavailable: ${blindSpotDataIssue}`
-          );
-        } else {
-          logger.info('[lmuSdkBridge] Blind spot monitor data available');
-        }
-      }
-
-      // Only deliver a frame the sim has actually published. The poll is a
-      // fixed 16 ms that is not synchronised to LMU's writer, so without this
-      // the same frame is mapped and broadcast more than once whenever the two
-      // rates drift past each other — an object and an IPC hop to tell every
-      // widget what it already knows, and a duplicate sample that makes the
-      // trace plots hold still and then jump.
-      //
-      // Absent when there is no player car (spectating, garage), in which case
-      // there is no clock to compare and every poll is delivered as before.
-      const frameClock = raw.elapsedTime;
-      const isNewTelemetryFrame =
-        typeof frameClock !== 'number' ||
-        !Number.isFinite(frameClock) ||
-        frameClock !== lastFrameClock;
-      lastFrameClock = typeof frameClock === 'number' ? frameClock : undefined;
-
-      if (isNewTelemetryFrame) {
+        // Every poll that gets here delivers a frame. Suppressing delivery for an
+        // unchanged frame clock was tried and removed: the measured duplicate rate
+        // is 0.3% (the poll is slower than the writer, so repeats are rare), and
+        // every consumer that matters -- the lap-trace recorder, the blind-spot
+        // monitor, the processors -- lives behind this call. A gate here buys
+        // almost nothing and can silence all of them at once.
         perfMetrics.markStart('lifecycleTelemetry');
         const telemetry = mapLmuTelemetry(raw);
         lifecycle?._onTelemetry(telemetry);
@@ -331,17 +279,33 @@ export async function publishIRacingSDKEvents(
         }
         telemetryCallbacks.forEach((callback) => callback(telemetry));
         perfMetrics.tick(telemetry);
+
+        if (session) {
+          latestSession = session;
+          lifecycle?._onSession(session);
+          processorHost?.onSession(session);
+          overlayManager.publishMessage('sessionData', session);
+          sessionCallbacks.forEach((callback) => callback(session));
+        }
+
+        perfMetrics.markEnd('processTelemetry');
+        consecutiveFailures = 0;
+      } catch (error) {
+        // This loop is the only source of telemetry for every widget, and it
+        // used to be an unguarded async IIFE: one throw ended it for the life of
+        // the process, with no log and no failed state — the overlays simply
+        // stopped updating while still reporting the sim as connected. A bad
+        // frame, or a call into an addon build that predates the JS, must cost
+        // one poll rather than the whole session.
+        consecutiveFailures += 1;
+        if (consecutiveFailures === 1 || consecutiveFailures % 100 === 0) {
+          logger.error(
+            `[lmuSdkBridge] Telemetry poll failed (${consecutiveFailures} in a row); continuing`,
+            error
+          );
+        }
       }
 
-      if (session) {
-        latestSession = session;
-        lifecycle?._onSession(session);
-        processorHost?.onSession(session);
-        overlayManager.publishMessage('sessionData', session);
-        sessionCallbacks.forEach((callback) => callback(session));
-      }
-
-      perfMetrics.markEnd('processTelemetry');
       const remainingDelay = Math.max(
         0,
         TELEMETRY_POLL_INTERVAL - (performance.now() - pollStartedAt)

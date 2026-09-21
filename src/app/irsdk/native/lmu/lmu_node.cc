@@ -169,15 +169,13 @@ bool LmuSdkNode::CaptureSnapshot()
   if (_mapped == NULL)
     return false;
 
-  // Skip the copy when the sim has not published since the held snapshot. The
-  // signal is mElapsedTime, measured at 100 Hz by lmu_probe; SME_UPDATE_TELEMETRY
-  // looked like the obvious choice but never moves, and gating on it froze every
-  // overlay after one frame. A negative clock means there is no player car and
-  // so nothing to compare, in which case the copy always happens.
-  const double liveClock = LmuFrameClock(*_mapped);
-  if (_hasSnapshot && liveClock >= 0.0 && liveClock == _frameClock)
-    return true;
-
+  // The copy is unconditional. Eliding it when mElapsedTime had not advanced was
+  // tried and removed: it saves only the memcpy -- read() still builds the whole
+  // JS object either way -- and any signal that turns out not to advance freezes
+  // the held snapshot, which silently takes out every consumer of telemetry at
+  // once. Not a trade worth making for one memcpy. LmuFrameClock and frameClock()
+  // remain available for callers that want to reason about frame freshness
+  // without taking that risk.
   for (int attempt = 0; attempt < 4; ++attempt)
   {
     const LMUSnapshotState before = {
