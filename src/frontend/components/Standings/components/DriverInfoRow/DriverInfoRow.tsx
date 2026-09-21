@@ -84,6 +84,7 @@ interface DriverRowInfoProps {
   p2pDisplayState?: P2PDisplayState;
   currentLap?: number;
   lapCountUnknown?: boolean;
+  hideLeaderGapIntervalLabels?: boolean;
 }
 
 // Helper function to provide dummy data for hidden rows
@@ -237,6 +238,7 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
     p2pDisplayState,
     currentLap,
     lapCountUnknown,
+    hideLeaderGapIntervalLabels,
   } = displayProps;
 
   const { currentDashboard } = useDashboard();
@@ -500,7 +502,9 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
           <DeltaCell
             key="gap"
             delta={gap}
-            showForUndefined={position === 1 ? 'gap' : undefined}
+            showForUndefined={
+              position === 1 && !hideLeaderGapIntervalLabels ? 'gap' : undefined
+            }
             decimalPlaces={
               config && 'gap' in config
                 ? (config.gap.decimalPlaces ?? 1)
@@ -519,7 +523,9 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
           <DeltaCell
             key="interval"
             delta={interval}
-            showForUndefined={position === 1 ? 'int' : undefined}
+            showForUndefined={
+              position === 1 && !hideLeaderGapIntervalLabels ? 'int' : undefined
+            }
             decimalPlaces={
               config && 'interval' in config
                 ? (config.interval.decimalPlaces ?? 1)
@@ -583,7 +589,6 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
             key="lapTimeDeltas"
             lapTimeDeltas={lapTimeDeltas}
             emptyLapDeltaPlaceholders={emptyLapDeltaPlaceholders}
-            isPlayer={isPlayer}
             compactMode={compactMode}
             decimalPlaces={
               config && 'lapTimeDeltas' in config
@@ -664,6 +669,7 @@ export const DriverInfoRow = memo((props: DriverRowInfoProps) => {
     carNumber,
     flairId,
     name,
+    hideLeaderGapIntervalLabels,
     teamName,
     radioActive,
     onPitRoad,

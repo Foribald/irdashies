@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { Gap } from '@irdashies/domain';
 import { formatGap } from '@irdashies/utils/time';
+import { buildDeltaPlaceholder } from './deltaPlaceholder';
 
 interface DeltaCellProps {
   delta?: number | Gap;
@@ -12,7 +13,7 @@ interface DeltaCellProps {
 export const DeltaCell = memo(
   ({
     delta,
-    showForUndefined = '-',
+    showForUndefined,
     decimalPlaces = 2,
     compactMode,
   }: DeltaCellProps) => {
@@ -27,8 +28,11 @@ export const DeltaCell = memo(
       return typeof val === 'object' && val !== undefined && 'laps' in val;
     };
 
+    const undefinedPlaceholder =
+      showForUndefined ?? buildDeltaPlaceholder(decimalPlaces);
+
     // Determine what to display
-    let displayValue: string = showForUndefined;
+    let displayValue: string = undefinedPlaceholder;
 
     if (delta !== undefined) {
       if (isGapObject(delta)) {
