@@ -5,6 +5,8 @@ export * from './useCurrentSessionType';
 export * from './useDrivingState';
 export * from './useFocusCarIdx';
 export * from './useResetOnDisconnect';
+export * from './useActiveSimulator';
+export * from './useSimWidgetSupport';
 export * from './useSessionVisibility';
 export * from './useThrottledWeather';
 export * from './useTotalRaceValue';

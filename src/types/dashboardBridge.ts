@@ -5,6 +5,7 @@ import type {
   DriverTagSettings,
 } from './dashboardLayout';
 import type { SessionProfileMap } from './sessionProfiles';
+import type { SimWidgetSupportConfig } from './simWidgetSupport';
 
 export interface SaveDashboardOptions {
   forceReload?: boolean;
@@ -65,6 +66,14 @@ export interface DashboardBridge {
   getGarageCoverImageAsDataUrl: (imagePath: string) => Promise<string | null>;
   savePlayerIconImage: (buffer: Uint8Array) => Promise<string>;
   getPlayerIconImageAsDataUrl: (imagePath: string) => Promise<string | null>;
+  /** The per-simulator disabled-widget list, read from simWidgetSupport.json. */
+  getSimWidgetSupport?: () => Promise<SimWidgetSupportConfig>;
+  /**
+   * Whether the settings menu lists every widget or only the ones the running
+   * sim supports. Persisted in config.json so it survives a restart.
+   */
+  getSettingsShowAllWidgets?: () => Promise<boolean>;
+  setSettingsShowAllWidgets?: (showAll: boolean) => Promise<void>;
   getAnalyticsOptOut: () => Promise<boolean>;
   setAnalyticsOptOut: (optOut: boolean) => Promise<void>;
   getCycleProfiles?: () => Promise<boolean>;
