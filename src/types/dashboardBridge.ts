@@ -1,4 +1,5 @@
 import type {
+  ActiveSimulator,
   DashboardLayout,
   DashboardProfile,
   DriverTagSettings,
@@ -51,6 +52,13 @@ export interface DashboardBridge {
   toggleDemoMode: (value: boolean) => void;
   onDemoModeChanged: (
     callback: (value: boolean) => void
+  ) => (() => void) | undefined;
+  /** Rebuilds the telemetry bridge after generalSettings.simulator changes. */
+  notifySimulatorPreferenceChanged?: () => void;
+  /** The running simulator, or null while auto-detection is still probing. */
+  getActiveSimulator?: () => Promise<ActiveSimulator | null>;
+  onSimulatorChanged?: (
+    callback: (value: ActiveSimulator | null) => void
   ) => (() => void) | undefined;
   getCurrentDashboard: () => DashboardLayout | null;
   saveGarageCoverImage: (buffer: Uint8Array) => Promise<string>;

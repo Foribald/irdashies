@@ -43,6 +43,15 @@ const FONT_WEIGHT_RESTRICTIONS: Record<string, string[]> = {
   lato: ['medium', 'semibold'],
 };
 
+export const SIMULATOR_PRESETS: Record<
+  NonNullable<GeneralSettingsType['simulator']>,
+  string
+> = {
+  auto: 'Auto',
+  iracing: 'iRacing',
+  lmu: 'Le Mans Ultimate',
+};
+
 export const HIGHLIGHT_COLOR_PRESETS = new Map([
   [15680580, 'Red'],
   [16347926, 'Orange'],
@@ -95,6 +104,7 @@ export const GeneralSettings = ({ previewMode }: GeneralSettingsProps = {}) => {
       currentDashboard?.generalSettings?.enableAutoStart ?? false,
     startMinimized: currentDashboard?.generalSettings?.startMinimized ?? false,
     closeToTray: currentDashboard?.generalSettings?.closeToTray ?? true,
+    simulator: currentDashboard?.generalSettings?.simulator ?? 'auto',
     compactMode: currentDashboard?.generalSettings?.compactMode ?? 'off',
     overlayAlwaysOnTop:
       currentDashboard?.generalSettings?.overlayAlwaysOnTop ?? true,
@@ -260,6 +270,17 @@ export const GeneralSettings = ({ previewMode }: GeneralSettingsProps = {}) => {
     const newSettings = { ...settings, closeToTray: enabled };
     setSettings(newSettings);
     updateDashboard(newSettings);
+  };
+
+  const handleSimulatorChange = (
+    selectedSimulator: NonNullable<GeneralSettingsType['simulator']>
+  ) => {
+    const newSettings = { ...settings, simulator: selectedSimulator };
+    setSettings(newSettings);
+    updateDashboard(newSettings);
+    // Saving alone only persists the choice; the bridge has to be rebuilt for
+    // it to take effect, which the main process does on this message.
+    bridge.notifySimulatorPreferenceChanged?.();
   };
 
   const handleCompactModeChange = (
@@ -773,6 +794,39 @@ export const GeneralSettings = ({ previewMode }: GeneralSettingsProps = {}) => {
                   />
                   <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                 </label>
+              </div>
+            </div>
+
+            {/* Simulator Setting */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-medium text-slate-200">
+                    Simulator
+                  </h3>
+                  <p className="text-sm text-slate-400">
+                    Which simulator to read telemetry from. In Auto mode
+                    irDashies detects the running sim, and if both are running
+                    it prioritises Le Mans Ultimate.
+                  </p>
+                </div>
+                <select
+                  value={settings.simulator ?? 'auto'}
+                  onChange={(e) =>
+                    handleSimulatorChange(
+                      e.target.value as NonNullable<
+                        GeneralSettingsType['simulator']
+                      >
+                    )
+                  }
+                  className="shrink-0 px-3 py-2 bg-slate-700 text-slate-300 rounded border border-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {Object.entries(SIMULATOR_PRESETS).map(([key, value]) => (
+                    <option key={key} value={key}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </>
