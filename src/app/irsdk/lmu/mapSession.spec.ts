@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LmuRawSession } from '../native/lmu';
 import {
+  deriveLmuShiftLightRpm,
   mapLmuSession,
   resolveLmuCarId,
   resolveLmuTrackId,
@@ -162,6 +163,13 @@ describe('mapLmuSession', () => {
     expect(s.WeekendInfo.NumCarTypes).toBe(3);
   });
 
+  it('maps a calibrated live pit speed limit', () => {
+    expect(
+      mapLmuSession(fixture(), null, 80 / 3.6).WeekendInfo.TrackPitSpeedLimit
+    ).toBe('80.00 kph');
+    expect(mapLmuSession(fixture()).WeekendInfo.TrackPitSpeedLimit).toBe('');
+  });
+
   it('maps driver info with the player flagged', () => {
     const s = mapLmuSession(fixture());
     expect(s.DriverInfo.DriverCarIdx).toBe(1);
@@ -175,6 +183,50 @@ describe('mapLmuSession', () => {
     expect(player.CarClassShortName).toBe('GT3');
     expect(player.CarClassID).toBe(0);
     expect(s.DriverInfo.DriverCarRedLine).toBe(9000);
+  });
+
+  it('flags only AI-controlled cars as AI', () => {
+    const raw = fixture();
+    raw.drivers[0].control = 1;
+    raw.drivers[1].control = 0;
+    raw.drivers[2].control = 2;
+
+    const drivers = mapLmuSession(raw).DriverInfo.Drivers;
+
+    expect(drivers.map((d) => d.CarIsAIControlled)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(drivers.map((d) => d.CarIsAI)).toEqual([1, 0, 0]);
+  });
+
+  it('leaves AI state unknown when the addon does not report control', () => {
+    const drivers = mapLmuSession(fixture()).DriverInfo.Drivers;
+
+    expect(drivers.every((d) => d.CarIsAIControlled === undefined)).toBe(true);
+    expect(drivers.every((d) => d.CarIsAI === 0)).toBe(true);
+  });
+
+  it('derives LMU shift lights from the engine limit', () => {
+    expect(deriveLmuShiftLightRpm(9000)).toEqual({
+      first: 8190,
+      shift: 8550,
+      last: 8730,
+      blink: 8730,
+    });
+    expect(deriveLmuShiftLightRpm(0)).toEqual({
+      first: 7735,
+      shift: 8075,
+      last: 8245,
+      blink: 8245,
+    });
+
+    const driverInfo = mapLmuSession(fixture()).DriverInfo;
+    expect(driverInfo.DriverCarSLFirstRPM).toBe(8190);
+    expect(driverInfo.DriverCarSLShiftRPM).toBe(8550);
+    expect(driverInfo.DriverCarSLLastRPM).toBe(8730);
+    expect(driverInfo.DriverCarSLBlinkRPM).toBe(8730);
   });
 
   it.each([

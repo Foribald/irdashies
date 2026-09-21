@@ -313,7 +313,7 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.dcPeakBrakeBias = num(
     raw.rearBrakeBias === undefined ? 0 : 1 - raw.rearBrakeBias
   );
-  t.dcPitSpeedLimiterToggle = bool(raw.speedLimiterActive);
+  t.dcPitSpeedLimiterToggle = bool(raw.speedLimiter);
   t.PitstopActive = bool(false);
   t.OnPitRoad = bool(playerIdx >= 0 ? raw.vehInPits[playerIdx] === 1 : false);
   t.IsOnTrack = bool(playerIdx >= 0 && raw.inRealtime);

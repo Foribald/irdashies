@@ -15,6 +15,10 @@ import { createDefaultProcessorHost } from '../../processors/processorRegistry';
 import { mapLmuSession } from '../../irsdk/lmu/mapSession';
 import { lmuSessionSignature } from '../../irsdk/lmu/sessionSignature';
 import {
+  LMU_DISCONNECT_GRACE_MS,
+  shouldHoldLmuRunningState,
+} from '../../irsdk/lmu/runningState';
+import {
   mapLmuCarLeftRight,
   mapLmuTelemetry,
 } from '../../irsdk/lmu/mapTelemetry';
@@ -82,6 +86,8 @@ export async function publishIRacingSDKEvents(
   let activeTrackName = '';
   let trackMap: LmuTrackMap | null = null;
   let lastBlindSpotDataIssue: string | null | undefined;
+  let pitSpeedLimitMs: number | undefined;
+  let lastPitCalibrationSpeed: number | undefined;
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -117,6 +123,7 @@ export async function publishIRacingSDKEvents(
     let lastInspectorTelemetryPublishTime = Number.NEGATIVE_INFINITY;
     let lastSessionPollTime = Number.NEGATIVE_INFINITY;
     let wasRunning = false;
+    let unavailableSince: number | null = null;
 
     while (!shouldStop) {
       const pollStartedAt = performance.now();
@@ -133,8 +140,31 @@ export async function publishIRacingSDKEvents(
       );
       if (!raw.running) {
         perfMetrics.markEnd('processTelemetry');
+        const unavailableAt = performance.now();
+        const firstUnavailableFrame = unavailableSince === null;
+        unavailableSince ??= unavailableAt;
+        if (
+          shouldHoldLmuRunningState(
+            wasRunning,
+            unavailableSince,
+            unavailableAt
+          )
+        ) {
+          if (firstUnavailableFrame) {
+            logger.warn(
+              `[lmuSdkBridge] Telemetry unavailable; holding running state for up to ${LMU_DISCONNECT_GRACE_MS} ms`
+            );
+          }
+          await new Promise((resolve) =>
+            setTimeout(resolve, TELEMETRY_POLL_INTERVAL)
+          );
+          if (shouldStop) break;
+          continue;
+        }
         if (wasRunning) {
-          logger.info('[lmuSdkBridge] LMU no longer publishing telemetry');
+          logger.info(
+            `[lmuSdkBridge] LMU telemetry unavailable for ${Math.round(unavailableAt - unavailableSince)} ms; confirming disconnect`
+          );
           publishRunningState(false);
           latestSession = null;
           overlayManager.clearLatestSessionData?.();
@@ -142,15 +172,25 @@ export async function publishIRacingSDKEvents(
           wasRunning = false;
           lastSessionSignature = null;
         }
+        unavailableSince = null;
         await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
         if (shouldStop) break;
         sdk.start();
         continue;
       }
 
+      if (unavailableSince !== null) {
+        logger.info(
+          `[lmuSdkBridge] Telemetry recovered after ${Math.round(performance.now() - unavailableSince)} ms; running state preserved`
+        );
+        unavailableSince = null;
+      }
+
       if (raw.trackName !== activeTrackName) {
         activeTrackName = raw.trackName;
         trackMap = mapStorage.load(activeTrackName);
+        pitSpeedLimitMs = undefined;
+        lastPitCalibrationSpeed = undefined;
         if (!trackMap) {
           const imported = findTinyPedalTrackMap(
             activeTrackName,
@@ -175,6 +215,9 @@ export async function publishIRacingSDKEvents(
         lastSessionSignature = null;
         logger.info(
           `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
+        );
+        logger.warn(
+          '[lmuSdkBridge] LMU does not expose a pit speed limit; the limit will remain hidden until calibrated from live limiter-capped speed'
         );
       }
       if (!trackMap) {
@@ -203,13 +246,43 @@ export async function publishIRacingSDKEvents(
       }
 
       const tickTime = performance.now();
+      const playerInPits =
+        raw.playerVehicleIdx >= 0 &&
+        raw.vehInPits[raw.playerVehicleIdx] === 1;
+      const calibrationSpeed = raw.speed;
+      const canCalibratePitSpeed =
+        pitSpeedLimitMs === undefined &&
+        playerInPits &&
+        Boolean(raw.speedLimiter) &&
+        (raw.unfilteredThrottle ?? 0) > 0.95 &&
+        (raw.unfilteredBrake ?? 1) < 0.01 &&
+        calibrationSpeed !== undefined &&
+        Number.isFinite(calibrationSpeed) &&
+        calibrationSpeed > 1;
+      if (canCalibratePitSpeed) {
+        const speedDelta =
+          lastPitCalibrationSpeed === undefined
+            ? Number.POSITIVE_INFINITY
+            : calibrationSpeed - lastPitCalibrationSpeed;
+        if (speedDelta >= 0 && speedDelta < 0.1) {
+          pitSpeedLimitMs = Math.round(calibrationSpeed * 3.6) / 3.6;
+          lastSessionSignature = null;
+          logger.info(
+            `[lmuSdkBridge] Calibrated pit speed limit at ${(pitSpeedLimitMs * 3.6).toFixed(0)} kph from live LMU telemetry`
+          );
+        }
+        lastPitCalibrationSpeed = calibrationSpeed;
+      } else {
+        lastPitCalibrationSpeed = undefined;
+      }
+
       let session: Session | null = null;
       if (rawSession) {
         lastSessionPollTime = tickTime;
         const signature = lmuSessionSignature(rawSession);
         if (signature !== lastSessionSignature) {
           lastSessionSignature = signature;
-          session = mapLmuSession(rawSession, trackMap);
+          session = mapLmuSession(rawSession, trackMap, pitSpeedLimitMs);
           const playerIdx = rawSession.playerVehicleIdx;
           logger.info(
             `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
@@ -270,7 +343,9 @@ export async function publishIRacingSDKEvents(
       );
       await new Promise((resolve) => setTimeout(resolve, remainingDelay));
     }
-  })();
+  })().catch((error) => {
+    logger.error('[lmuSdkBridge] Telemetry loop failed', error);
+  });
 
   return {
     onTelemetry: (callback: (value: Telemetry) => void) => {

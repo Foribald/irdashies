@@ -514,6 +514,7 @@ Napi::Value LmuSdkNode::ReadSession(const Napi::CallbackInfo &info)
     auto d = Napi::Object::New(env);
     d.Set("id", v.mID);
     d.Set("isPlayer", v.mIsPlayer);
+    d.Set("control", v.mControl);
     SetString(d, "name", v.mDriverName, sizeof(v.mDriverName));
     SetString(d, "vehicleName", v.mVehicleName, sizeof(v.mVehicleName));
     const auto *telemetryVehicle = GetVehicleTelemetryById(v.mID);
