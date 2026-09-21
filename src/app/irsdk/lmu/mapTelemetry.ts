@@ -7,6 +7,7 @@ import {
 import {
   classifyLmuBlindSpot,
   deriveLmuRelativePositions,
+  resetLmuBlindSpotLatch,
   type LmuBlindSpotLatch,
 } from './proximity';
 import {
@@ -15,6 +16,35 @@ import {
   lmuSessionType,
   rankLmuEntries,
 } from './positions';
+import {
+  createLmuLapDistanceState,
+  estimateLmuLapDistPct,
+  resetLmuLapDistanceState,
+  type LmuLapDistanceState,
+} from './lapDistance';
+import { createLmuBlindSpotLatch } from './proximity';
+
+/**
+ * Per-connection state the mapper carries between frames.
+ *
+ * Owned by the bridge rather than the module so nothing is shared between
+ * connections and every spec that calls `mapLmuTelemetry(raw)` keeps the old
+ * stateless behaviour.
+ */
+export interface LmuMapperState {
+  blindSpotLatch: LmuBlindSpotLatch;
+  lapDistance: LmuLapDistanceState;
+}
+
+export const createLmuMapperState = (): LmuMapperState => ({
+  blindSpotLatch: createLmuBlindSpotLatch(),
+  lapDistance: createLmuLapDistanceState(),
+});
+
+export const resetLmuMapperState = (state: LmuMapperState): void => {
+  resetLmuBlindSpotLatch(state.blindSpotLatch);
+  resetLmuLapDistanceState(state.lapDistance);
+};
 
 type Raw = import('../native/lmu').LmuRawTelemetry;
 
@@ -129,11 +159,11 @@ function trackLocation(raw: Raw, carIdx: number): number {
 export function mapLmuTelemetry(
   raw: Raw,
   /**
-   * Blind-spot hysteresis state, owned by the caller so it survives between
-   * frames. Omitted -- as every spec does -- the classification is stateless and
-   * behaves exactly as it did before the latch existed.
+   * State carried between frames: blind-spot hysteresis and the lap-distance
+   * integrator. Omitted -- as every spec does -- both degrade to the stateless
+   * behaviour, which is exactly what this did before they existed.
    */
-  blindSpotLatch?: LmuBlindSpotLatch
+  state?: LmuMapperState
 ): Telemetry {
   // Boundary note: a handful of generated Telemetry keys (e.g. SessionTime) are
   // typed with an `undefined[]` value shape although the iRacing native layer
@@ -145,10 +175,21 @@ export function mapLmuTelemetry(
     raw.playerHasVehicle && raw.playerVehicleIdx >= 0
       ? raw.playerVehicleIdx
       : -1;
-  const lapDistPct = Math.min(
-    1,
-    Math.max(0, raw.vehLapDistPct[playerIdx] ?? 0)
-  );
+  const scoringLapDistPct = raw.vehLapDistPct[playerIdx] ?? 0;
+  // LMU publishes lap distance only in the 5 Hz scoring block, so between
+  // scoring updates the position is advanced by speed and resynchronised on each
+  // one. Without it the position steps ~14 m at racing speed, and LapTrace --
+  // which discards samples that have not advanced -- recorded about five samples
+  // a second.
+  const lapDistPct = state
+    ? estimateLmuLapDistPct(state.lapDistance, {
+        scoringPct: scoringLapDistPct,
+        elapsedTime: raw.elapsedTime ?? -1,
+        lapNumber: raw.lapNumber ?? -1,
+        speedMs: raw.speed ?? 0,
+        trackLengthM: raw.lapDist ?? 0,
+      })
+    : Math.min(1, Math.max(0, scoringLapDistPct));
   const steeringMaxRad = ((raw.visualSteeringWheelRange ?? 0) * Math.PI) / 360;
   const relativePositions = deriveLmuRelativePositions(raw);
 
@@ -210,7 +251,8 @@ export function mapLmuTelemetry(
   // Reuses the positions derived above rather than deriving them again: the
   // latch must advance exactly once per frame.
   t.CarLeftRight = num(
-    classifyLmuBlindSpot(relativePositions, blindSpotLatch) ?? CarLeftRight.Off
+    classifyLmuBlindSpot(relativePositions, state?.blindSpotLatch) ??
+      CarLeftRight.Off
   );
 
   // Per-car.
@@ -248,6 +290,13 @@ export function mapLmuTelemetry(
   t.CarIdxLap = perCar((i) => (raw.vehTotalLaps[i] ?? 0) + 1, -1);
   t.CarIdxLapCompleted = perCar((i) => raw.vehTotalLaps[i] ?? 0, -1);
   t.CarIdxLapDistPct = lapDistPctArr(raw.vehLapDistPct);
+  // The player's own slot gets the smoothed value too, so anything measuring
+  // against the player (relative gaps, the blind-spot bar) sees continuous
+  // motion. Other cars stay at the scoring rate: per-car speed is not exported
+  // by the addon yet, so there is nothing to integrate with.
+  if (playerIdx >= 0 && playerIdx < slots && lapDistPct >= 0) {
+    (t.CarIdxLapDistPct.value as number[])[playerIdx] = lapDistPct;
+  }
   t.CarIdxTrackSurface = perCar(
     (carIdx) => trackLocation(raw, carIdx),
     TRACK_NOT_IN_WORLD

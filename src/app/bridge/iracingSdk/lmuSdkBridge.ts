@@ -15,11 +15,11 @@ import type { ChannelBus } from '../channelBridge';
 import { createDefaultProcessorHost } from '../../processors/processorRegistry';
 import { mapLmuSession } from '../../irsdk/lmu/mapSession';
 import { lmuSessionSignature } from '../../irsdk/lmu/sessionSignature';
-import { mapLmuTelemetry } from '../../irsdk/lmu/mapTelemetry';
 import {
-  createLmuBlindSpotLatch,
-  resetLmuBlindSpotLatch,
-} from '../../irsdk/lmu/proximity';
+  createLmuMapperState,
+  mapLmuTelemetry,
+  resetLmuMapperState,
+} from '../../irsdk/lmu/mapTelemetry';
 import {
   findTinyPedalTrackMap,
   LmuTrackMapRecorder,
@@ -100,9 +100,10 @@ export async function publishIRacingSDKEvents(
   let activeTrackName = '';
   let trackMap: LmuTrackMap | null = null;
   let lastBlindSpotDataIssue: string | null | undefined;
-  // Blind-spot hysteresis, held across frames so a car running alongside stops
-  // flickering between CarLeft and Clear at the delivery rate.
-  const blindSpotLatch = createLmuBlindSpotLatch();
+  // State the mapper carries between frames: blind-spot hysteresis, so a car
+  // running alongside stops flickering, and the lap-distance integrator that
+  // lifts the player's position from LMU's 5 Hz scoring rate to the poll rate.
+  const mapperState = createLmuMapperState();
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -165,7 +166,7 @@ export async function publishIRacingSDKEvents(
             lifecycle?._onDisconnect();
             wasRunning = false;
             lastSessionSignature = null;
-            resetLmuBlindSpotLatch(blindSpotLatch);
+            resetLmuMapperState(mapperState);
           }
           await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
           if (shouldStop) break;
@@ -175,8 +176,9 @@ export async function publishIRacingSDKEvents(
 
         if (raw.trackName !== activeTrackName) {
           activeTrackName = raw.trackName;
-          // Slots are keyed on mID and can be reused by a different car.
-          resetLmuBlindSpotLatch(blindSpotLatch);
+          // Slots are keyed on mID and can be reused by a different car, and a
+          // new track invalidates the lap-distance anchor.
+          resetLmuMapperState(mapperState);
           trackMap = mapStorage.load(activeTrackName);
           if (!trackMap) {
             const imported = findTinyPedalTrackMap(
@@ -204,22 +206,6 @@ export async function publishIRacingSDKEvents(
             `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
           );
         }
-        if (!trackMap) {
-          const recordedMap = mapRecorder.update(raw);
-          if (recordedMap) {
-            try {
-              mapStorage.save(activeTrackName, recordedMap);
-              trackMap = recordedMap;
-              lastSessionSignature = null;
-              logger.info(
-                `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
-              );
-            } catch (error) {
-              logger.error('[lmuSdkBridge] Failed to save track map', error);
-            }
-          }
-        }
-
         if (!wasRunning) {
           logger.info(
             `[lmuSdkBridge] LMU is running; version=${raw.gameVersion} session=${raw.session} phase=${raw.gamePhase} vehicles=${raw.numVehicles}/${raw.activeVehicles} player=${raw.playerVehicleIdx} trackLength=${raw.lapDist}`
@@ -251,7 +237,7 @@ export async function publishIRacingSDKEvents(
         // monitor, the processors -- lives behind this call. A gate here buys
         // almost nothing and can silence all of them at once.
         perfMetrics.markStart('lifecycleTelemetry');
-        const telemetry = mapLmuTelemetry(raw, blindSpotLatch);
+        const telemetry = mapLmuTelemetry(raw, mapperState);
 
         // Read off the built frame rather than deriving the geometry a third
         // time. CarLeftRight.Off means the geometry was unavailable, which is a
@@ -270,6 +256,31 @@ export async function publishIRacingSDKEvents(
             );
           } else {
             logger.info('[lmuSdkBridge] Blind spot monitor data available');
+          }
+        }
+
+        if (!trackMap) {
+          // Runs after the frame is built because it consumes the smoothed lap
+          // fraction: LMU's own vehLapDistPct only moves at 5 Hz, and the
+          // recorder rejects any sample that has not advanced, so it was
+          // discarding almost every position it sampled. A map first recorded on
+          // this frame is picked up on the next poll, which the signature reset
+          // below already forces.
+          const recordedMap = mapRecorder.update(
+            raw,
+            telemetry.LapDistPct?.value[0] as number | undefined
+          );
+          if (recordedMap) {
+            try {
+              mapStorage.save(activeTrackName, recordedMap);
+              trackMap = recordedMap;
+              lastSessionSignature = null;
+              logger.info(
+                `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
+              );
+            } catch (error) {
+              logger.error('[lmuSdkBridge] Failed to save track map', error);
+            }
           }
         }
 

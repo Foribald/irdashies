@@ -179,7 +179,14 @@ export class LmuTrackMapRecorder {
   private recording = false;
   private points: RecordedPoint[] = [];
 
-  update(frame: LmuMapFrame): LmuTrackMap | null {
+  /**
+   * @param smoothedProgress the player's lap fraction at the poll rate, when the
+   *   caller has one. LMU's own `vehLapDistPct` only moves at the 5 Hz scoring
+   *   rate, and the `distance <= previous.distance` test below then rejects every
+   *   frame in between — so roughly twelve of every thirteen sampled positions
+   *   were thrown away while being paired with a 100 Hz position.
+   */
+  update(frame: LmuMapFrame, smoothedProgress?: number): LmuTrackMap | null {
     if (frame.trackName !== this.trackName) this.reset(frame.trackName);
     if (
       !frame.playerHasVehicle ||
@@ -191,7 +198,10 @@ export class LmuTrackMapRecorder {
       return null;
     }
 
-    const progress = frame.vehLapDistPct[frame.playerVehicleIdx];
+    const progress =
+      smoothedProgress !== undefined && finite(smoothedProgress)
+        ? smoothedProgress
+        : frame.vehLapDistPct[frame.playerVehicleIdx];
     if (!finite(progress)) return null;
 
     if (this.lapStartET === null) {
