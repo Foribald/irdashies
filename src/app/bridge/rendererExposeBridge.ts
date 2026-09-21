@@ -203,6 +203,15 @@ export function exposeBridge() {
     getPlayerIconImageAsDataUrl: (imagePath: string) => {
       return ipcRenderer.invoke('getPlayerIconImageAsDataUrl', imagePath);
     },
+    getSimWidgetSupport: () => {
+      return ipcRenderer.invoke('getSimWidgetSupport');
+    },
+    getSettingsShowAllWidgets: () => {
+      return ipcRenderer.invoke('getSettingsShowAllWidgets');
+    },
+    setSettingsShowAllWidgets: (showAll: boolean) => {
+      return ipcRenderer.invoke('setSettingsShowAllWidgets', showAll);
+    },
     getAnalyticsOptOut: () => {
       return ipcRenderer.invoke('getAnalyticsOptOut');
     },

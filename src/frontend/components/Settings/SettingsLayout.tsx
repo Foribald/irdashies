@@ -11,13 +11,13 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom';
-import { useDashboard } from '@irdashies/context';
-import { SettingsLoader } from './SettingsLoader';
-import { SettingsMenu } from './SettingsMenu';
 import {
   simulatorDisplayName,
   useActiveSimulator,
-} from './hooks/useActiveSimulator';
+  useDashboard,
+} from '@irdashies/context';
+import { SettingsLoader } from './SettingsLoader';
+import { SettingsMenu } from './SettingsMenu';
 
 export const SettingsLayout = () => {
   const {
@@ -61,10 +61,12 @@ export const SettingsLayout = () => {
         <div className="flex flex-row gap-4 items-center">
           <GearIcon size={32} weight="bold" />
           <div>
-            <div className="flex flex-row gap-2 items-baseline">
+            <div className="flex flex-row gap-6 items-baseline">
               <h1 className="text-2xl font-bold">Overlay Settings</h1>
               {simulatorName && (
-                <span className="text-sm text-slate-300">{simulatorName}</span>
+                <span className="text-lg font-medium text-slate-300">
+                  {simulatorName}
+                </span>
               )}
             </div>
             {currentProfile && (

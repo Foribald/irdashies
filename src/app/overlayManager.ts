@@ -4,7 +4,13 @@ import {
   BrowserWindowConstructorOptions,
   screen,
 } from 'electron';
-import type { DashboardLayout, ContainerBoundsInfo } from '@irdashies/types';
+import type {
+  ActiveSimulator,
+  DashboardLayout,
+  ContainerBoundsInfo,
+} from '@irdashies/types';
+import { isWidgetDisabledForSim } from '@irdashies/types';
+import { getSimWidgetSupport } from './storage/simWidgetSupport';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Notification } from 'electron';
@@ -85,6 +91,44 @@ export class OverlayManager {
   /** Last-applied enabled state, so syncGantryWindow only acts on changes. */
   private gantryEnabled = false;
   private currentDashboard: DashboardLayout | undefined;
+  /**
+   * The running simulator, or null while none is detected. Widgets the sim
+   * cannot support are treated as switched off, so no window is created for
+   * them and the user's own enabled setting is left untouched.
+   */
+  private activeSimulator: ActiveSimulator | null = null;
+
+  /**
+   * A widget shows only when the user enabled it AND the running sim supports
+   * it. Both render paths go through this so a sim-disabled widget is
+   * indistinguishable from one switched off.
+   */
+  private isWidgetVisible(widget: {
+    id: string;
+    type?: string;
+    enabled: boolean;
+  }): boolean {
+    if (!widget.enabled) return false;
+    return !isWidgetDisabledForSim(
+      getSimWidgetSupport(),
+      widget.type ?? widget.id,
+      this.activeSimulator
+    );
+  }
+
+  /**
+   * Records the running simulator and rebuilds the overlays, because the set of
+   * supported widgets just changed: ones the previous sim blocked come back if
+   * the user had them enabled, and ones this sim cannot show go away.
+   */
+  public setActiveSimulator(simulator: ActiveSimulator | null): void {
+    if (simulator === this.activeSimulator) return;
+    this.activeSimulator = simulator;
+    this.publishMessage('simulatorChanged', simulator);
+    if (this.currentDashboard) {
+      this.forceRefreshOverlays(this.currentDashboard);
+    }
+  }
   private isLocked = true;
   private isQuitting = false;
   private skipTaskbar = true;
@@ -142,7 +186,7 @@ export class OverlayManager {
     // Determine which displays have widgets assigned (by center-point)
     const displaysWithWidgets = new Set<number>();
     for (const widget of dashboardLayout.widgets) {
-      if (!widget.enabled) continue;
+      if (!this.isWidgetVisible(widget)) continue;
       const centerX = widget.layout.x + widget.layout.width / 2;
       const centerY = widget.layout.y + widget.layout.height / 2;
       for (const display of allDisplays) {
@@ -463,7 +507,9 @@ export class OverlayManager {
     const primaryDisplay = screen.getPrimaryDisplay();
     const isPrimary = displayId === primaryDisplay.id;
 
-    const enabledWidgets = dashboard.widgets.filter((w) => w.enabled);
+    const enabledWidgets = dashboard.widgets.filter((w) =>
+      this.isWidgetVisible(w)
+    );
     const widgetsForDisplay = enabledWidgets.filter((widget) => {
       const centerX = widget.layout.x + widget.layout.width / 2;
       const centerY = widget.layout.y + widget.layout.height / 2;
@@ -786,7 +832,7 @@ export class OverlayManager {
 
     const displaysWithWidgets = new Set<number>();
     for (const widget of dashboardLayout.widgets) {
-      if (!widget.enabled) continue;
+      if (!this.isWidgetVisible(widget)) continue;
       const centerX = widget.layout.x + widget.layout.width / 2;
       const centerY = widget.layout.y + widget.layout.height / 2;
       for (const display of allDisplays) {
