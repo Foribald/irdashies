@@ -2,6 +2,7 @@ import { OverlayManager } from '../../overlayManager';
 import { TelemetryPerfMetrics } from '../../perfMetrics';
 import { getPerfRunConfig } from '../../perfRunConfig';
 import {
+  CarLeftRight,
   TELEMETRY_INSPECTOR_RATE_HZ,
   type IrSdkSourceBridge,
   type LmuTrackMap,
@@ -14,10 +15,11 @@ import type { ChannelBus } from '../channelBridge';
 import { createDefaultProcessorHost } from '../../processors/processorRegistry';
 import { mapLmuSession } from '../../irsdk/lmu/mapSession';
 import { lmuSessionSignature } from '../../irsdk/lmu/sessionSignature';
+import { mapLmuTelemetry } from '../../irsdk/lmu/mapTelemetry';
 import {
-  mapLmuCarLeftRight,
-  mapLmuTelemetry,
-} from '../../irsdk/lmu/mapTelemetry';
+  createLmuBlindSpotLatch,
+  resetLmuBlindSpotLatch,
+} from '../../irsdk/lmu/proximity';
 import {
   findTinyPedalTrackMap,
   LmuTrackMapRecorder,
@@ -98,6 +100,9 @@ export async function publishIRacingSDKEvents(
   let activeTrackName = '';
   let trackMap: LmuTrackMap | null = null;
   let lastBlindSpotDataIssue: string | null | undefined;
+  // Blind-spot hysteresis, held across frames so a car running alongside stops
+  // flickering between CarLeft and Clear at the delivery rate.
+  const blindSpotLatch = createLmuBlindSpotLatch();
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -160,6 +165,7 @@ export async function publishIRacingSDKEvents(
             lifecycle?._onDisconnect();
             wasRunning = false;
             lastSessionSignature = null;
+            resetLmuBlindSpotLatch(blindSpotLatch);
           }
           await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
           if (shouldStop) break;
@@ -169,6 +175,8 @@ export async function publishIRacingSDKEvents(
 
         if (raw.trackName !== activeTrackName) {
           activeTrackName = raw.trackName;
+          // Slots are keyed on mID and can be reused by a different car.
+          resetLmuBlindSpotLatch(blindSpotLatch);
           trackMap = mapStorage.load(activeTrackName);
           if (!trackMap) {
             const imported = findTinyPedalTrackMap(
@@ -236,8 +244,20 @@ export async function publishIRacingSDKEvents(
           }
         }
 
+        // Every poll that gets here delivers a frame. Suppressing delivery for an
+        // unchanged frame clock was tried and removed: the measured duplicate rate
+        // is 0.3% (the poll is slower than the writer, so repeats are rare), and
+        // every consumer that matters -- the lap-trace recorder, the blind-spot
+        // monitor, the processors -- lives behind this call. A gate here buys
+        // almost nothing and can silence all of them at once.
+        perfMetrics.markStart('lifecycleTelemetry');
+        const telemetry = mapLmuTelemetry(raw, blindSpotLatch);
+
+        // Read off the built frame rather than deriving the geometry a third
+        // time. CarLeftRight.Off means the geometry was unavailable, which is a
+        // distinct value from Clear.
         const blindSpotDataIssue =
-          mapLmuCarLeftRight(raw) === null
+          telemetry.CarLeftRight?.value[0] === CarLeftRight.Off
             ? 'vehicle world positions or player orientation are unavailable'
             : raw.lapDist <= 0
               ? `track length is invalid (${raw.lapDist} m)`
@@ -253,14 +273,6 @@ export async function publishIRacingSDKEvents(
           }
         }
 
-        // Every poll that gets here delivers a frame. Suppressing delivery for an
-        // unchanged frame clock was tried and removed: the measured duplicate rate
-        // is 0.3% (the poll is slower than the writer, so repeats are rare), and
-        // every consumer that matters -- the lap-trace recorder, the blind-spot
-        // monitor, the processors -- lives behind this call. A gate here buys
-        // almost nothing and can silence all of them at once.
-        perfMetrics.markStart('lifecycleTelemetry');
-        const telemetry = mapLmuTelemetry(raw);
         lifecycle?._onTelemetry(telemetry);
         perfMetrics.markEnd('lifecycleTelemetry');
         processorHost?.onFrame(telemetry);

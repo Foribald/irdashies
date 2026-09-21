@@ -4,7 +4,11 @@ import {
   SessionState,
   type Telemetry,
 } from '@irdashies/types';
-import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
+import {
+  classifyLmuBlindSpot,
+  deriveLmuRelativePositions,
+  type LmuBlindSpotLatch,
+} from './proximity';
 import {
   lmuOccupiedSlots,
   lmuRankModeFor,
@@ -122,7 +126,15 @@ function trackLocation(raw: Raw, carIdx: number): number {
  * Values without an LMU source default to 0/[]/false so downstream stores and
  * processors behave the same as when an iRacing telemetry var is absent.
  */
-export function mapLmuTelemetry(raw: Raw): Telemetry {
+export function mapLmuTelemetry(
+  raw: Raw,
+  /**
+   * Blind-spot hysteresis state, owned by the caller so it survives between
+   * frames. Omitted -- as every spec does -- the classification is stateless and
+   * behaves exactly as it did before the latch existed.
+   */
+  blindSpotLatch?: LmuBlindSpotLatch
+): Telemetry {
   // Boundary note: a handful of generated Telemetry keys (e.g. SessionTime) are
   // typed with an `undefined[]` value shape although the iRacing native layer
   // emits numbers there at runtime. Building into a plain record and casting is
@@ -195,7 +207,11 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
   t.PlayerCarClass = num(raw.vehClass[playerIdx] ?? 0);
   t.CamCarIdx = num(playerIdx);
   t.PlayerCarPitSvStatus = num(0);
-  t.CarLeftRight = num(mapLmuCarLeftRight(raw) ?? CarLeftRight.Off);
+  // Reuses the positions derived above rather than deriving them again: the
+  // latch must advance exactly once per frame.
+  t.CarLeftRight = num(
+    classifyLmuBlindSpot(relativePositions, blindSpotLatch) ?? CarLeftRight.Off
+  );
 
   // Per-car.
   //
