@@ -30,20 +30,6 @@ const wearStyles: Record<WearCondition, string> = {
   unavailable: 'text-slate-500',
 };
 
-const temperatureLabels: Record<TemperatureCondition, string> = {
-  cold: 'COLD',
-  optimal: 'OPTIMAL',
-  hot: 'HOT',
-  unavailable: 'NO DATA',
-};
-
-const wearLabels: Record<WearCondition, string> = {
-  healthy: 'HEALTHY',
-  worn: 'WORN',
-  replace: 'REPLACE',
-  unavailable: 'NO DATA',
-};
-
 interface TyrePanelViewProps {
   config: TyrePanelConfig;
   temperature?: readonly number[];
@@ -52,11 +38,8 @@ interface TyrePanelViewProps {
   isLive: boolean;
 }
 
-const displayValue = (
-  value: number | undefined,
-  digits: number,
-  suffix: string
-) => (isAvailable(value) ? `${value.toFixed(digits)}${suffix}` : '—');
+const displayValue = (value: number | undefined, digits: number) =>
+  isAvailable(value) ? value.toFixed(digits) : '—';
 
 export function TyrePanelView({
   config,
@@ -108,48 +91,23 @@ export function TyrePanelView({
 
           return (
             <div
-              className="min-w-0 rounded-sm border border-slate-700/70 bg-slate-800/70 px-2 py-1"
+              className="flex min-w-0 items-start justify-between rounded-sm border border-slate-700/70 bg-slate-800/70 px-2 py-1"
               key={corner}
             >
-              <div className="mb-0.5 flex items-center justify-between">
-                <span className="text-xs font-bold text-white">{corner}</span>
-                <span
-                  className={`text-[9px] font-bold tracking-wide ${temperatureStyles[temperatureCondition]}`}
-                >
-                  {temperatureLabels[temperatureCondition]}
+              <span className="text-xs font-bold leading-4 text-white">
+                {corner}
+              </span>
+              <div className="flex flex-col items-end font-mono text-sm font-semibold leading-4">
+                <span className={temperatureStyles[temperatureCondition]}>
+                  {displayValue(displayedTemperature, 0)}
                 </span>
-              </div>
-              <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 text-[10px] leading-4">
-                <span className="text-slate-500">TEMP</span>
-                <span
-                  className={`text-right font-mono text-sm font-semibold ${temperatureStyles[temperatureCondition]}`}
-                >
-                  {displayValue(
-                    displayedTemperature,
-                    0,
-                    `°${config.temperatureUnit}`
-                  )}
+                <span className={temperatureStyles[temperatureCondition]}>
+                  {displayValue(displayedPressure, 1)}
                 </span>
-                <span className="text-slate-500">PRESS</span>
-                <span className="text-right font-mono text-slate-200">
-                  {displayValue(
-                    displayedPressure,
-                    1,
-                    ` ${config.pressureUnit}`
-                  )}
-                </span>
-                <span className="text-slate-500">TREAD</span>
-                <span
-                  className={`flex items-baseline justify-end gap-1 font-mono font-semibold ${wearStyles[wearCondition]}`}
-                >
-                  <span>
-                    {isAvailable(wear?.[index])
-                      ? `${((wear?.[index] as number) * 100).toFixed(0)}%`
-                      : '—'}
-                  </span>
-                  <span className="font-sans text-[8px] tracking-wide">
-                    {wearLabels[wearCondition]}
-                  </span>
+                <span className={wearStyles[wearCondition]}>
+                  {isAvailable(wear?.[index])
+                    ? `${((wear?.[index] as number) * 100).toFixed(0)}%`
+                    : '—'}
                 </span>
               </div>
             </div>

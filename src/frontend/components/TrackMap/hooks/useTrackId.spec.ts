@@ -11,6 +11,18 @@ describe('resolveTrackMapId', () => {
     }
   );
 
+  it.each([
+    ['Sebring International Raceway', 95],
+    ['Autodromo Nazionale Monza', 239],
+    ['Autódromo José Carlos Pace (Interlagos)', 329],
+    ['Silverstone Circuit', 341],
+    ['Autódromo Internacional do Algarve', 509],
+  ])('uses matching iRacing geometry for LMU track %s', (trackName, id) => {
+    expect(resolveTrackMapId(1_234_567, trackName, 'Le Mans Ultimate')).toBe(
+      id
+    );
+  });
+
   it('keeps iRacing track ids unchanged', () => {
     expect(resolveTrackMapId(463, 'imola gp', 'iRacing')).toBe(463);
   });

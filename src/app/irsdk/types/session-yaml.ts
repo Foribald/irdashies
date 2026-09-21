@@ -19,6 +19,11 @@ export interface LmuTrackMap {
     point: { x: number; y: number; length: number };
     direction: 'anticlockwise';
   };
+  turns?: {
+    x?: number;
+    y?: number;
+    content?: string;
+  }[];
 }
 
 /**

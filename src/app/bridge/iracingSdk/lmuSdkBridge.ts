@@ -25,7 +25,7 @@ import {
   resetLmuMapperState,
 } from '../../irsdk/lmu/mapTelemetry';
 import {
-  findTinyPedalTrackMap,
+  loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
   tinyPedalTrackMapDirectories,
@@ -220,27 +220,28 @@ export async function publishIRacingSDKEvents(
           // Slots are keyed on mID and can be reused by a different car, and a
           // new track invalidates the lap-distance anchor.
           resetLmuMapperState(mapperState);
-          trackMap = mapStorage.load(activeTrackName);
+          // Storage, then the bundled maps, then a local TinyPedal install.
+          const loadedMap = loadLmuTrackMap(
+            activeTrackName,
+            mapStorage,
+            tinyPedalTrackMapDirectories()
+          );
+          trackMap = loadedMap?.map ?? null;
           pitSpeedLimitMs = undefined;
           lastPitCalibrationSpeed = undefined;
-          if (!trackMap) {
-            const imported = findTinyPedalTrackMap(
-              activeTrackName,
-              tinyPedalTrackMapDirectories()
-            );
-            if (imported) {
-              trackMap = imported.map;
-              try {
-                mapStorage.save(activeTrackName, imported.map);
-                logger.info(
-                  `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${imported.filePath}`
-                );
-              } catch (error) {
-                logger.error(
-                  '[lmuSdkBridge] Failed to save imported track map',
-                  error
-                );
-              }
+          // Only a TinyPedal import needs saving; storage already has the
+          // others, and the bundled maps ship with the app.
+          if (loadedMap?.source === 'tinyPedal') {
+            try {
+              mapStorage.save(activeTrackName, loadedMap.map);
+              logger.info(
+                `[lmuSdkBridge] Imported track map for ${activeTrackName} from ${loadedMap.filePath}`
+              );
+            } catch (error) {
+              logger.error(
+                '[lmuSdkBridge] Failed to save imported track map',
+                error
+              );
             }
           }
           mapRecorder.reset(activeTrackName);
