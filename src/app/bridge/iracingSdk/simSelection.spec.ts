@@ -4,6 +4,7 @@ import {
   resolveSimulatorPreference,
   resolveWithoutProbing,
   selectDetectedSimulator,
+  shouldReuseBridge,
 } from './simSelection';
 
 describe('getSimulatorOverride', () => {
@@ -105,5 +106,57 @@ describe('selectDetectedSimulator', () => {
       ])
     ).toBeUndefined();
     expect(selectDetectedSimulator([])).toBeUndefined();
+  });
+});
+
+describe('shouldReuseBridge', () => {
+  const live = {
+    hasLiveBridge: true,
+    isMock: false,
+    simulator: 'iracing' as const,
+    activeSimulator: 'iracing' as const,
+  };
+
+  it('keeps the bridge when the rebuild would produce the same one', () => {
+    // On a single-source build 'auto' and a pinned iRacing both resolve to
+    // iracing, so moving between them would tear telemetry down and build the
+    // identical thing back.
+    expect(shouldReuseBridge(live)).toBe(true);
+  });
+
+  it('rebuilds when the simulator actually changes', () => {
+    expect(shouldReuseBridge({ ...live, simulator: 'lmu' })).toBe(false);
+  });
+
+  it('rebuilds when no bridge is up yet', () => {
+    // activeSimulator is written before the publisher returns, so a matching
+    // id does not prove a bridge is running. The handle is the readiness
+    // signal, and initial setup must not be skipped.
+    expect(shouldReuseBridge({ ...live, hasLiveBridge: false })).toBe(false);
+  });
+
+  it('rebuilds when the live source is a mock', () => {
+    // Demo mode and the non-Windows mock leave activeSimulator unset and are
+    // not the sim-specific bridge a match would imply.
+    expect(shouldReuseBridge({ ...live, isMock: true })).toBe(false);
+  });
+
+  it('rebuilds when auto has not resolved to a simulator', () => {
+    // 'auto' on a multi-source build is undefined pending a probe. Two
+    // undefineds are not a match, or switching to Auto would never re-probe.
+    expect(
+      shouldReuseBridge({
+        hasLiveBridge: true,
+        isMock: false,
+        simulator: undefined,
+        activeSimulator: undefined,
+      })
+    ).toBe(false);
+  });
+
+  it('rebuilds while auto-detection is still probing', () => {
+    expect(shouldReuseBridge({ ...live, activeSimulator: undefined })).toBe(
+      false
+    );
   });
 });

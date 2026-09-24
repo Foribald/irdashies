@@ -67,3 +67,37 @@ export function selectDetectedSimulator(
 ): ActiveSimulator | undefined {
   return probeResults.find((result) => result.active)?.id;
 }
+
+/**
+ * Whether a rebuild can be skipped because the live bridge is already the one
+ * that would be built.
+ *
+ * On a single-source build, `auto` and a pinned iRacing both resolve to
+ * `iracing` and load the same publisher, so moving between them tears the
+ * telemetry down and builds the identical thing back. Skipping keeps the
+ * overlays connected.
+ *
+ * The guards are what make equality safe to act on:
+ *
+ * - `hasLiveBridge` — `activeSimulator` is written before the publisher
+ *   returns, so a matching id alone does not prove a bridge is up. The handle
+ *   is only assigned once one is, so it is the readiness signal.
+ * - `!isMock` — demo mode and the non-Windows mock leave `activeSimulator`
+ *   unset, and the mock is not the sim-specific bridge a match would imply.
+ * - `simulator` — `auto` on a multi-source build resolves to undefined
+ *   pending a probe, and two undefineds are not a match.
+ */
+export function shouldReuseBridge({
+  hasLiveBridge,
+  isMock,
+  simulator,
+  activeSimulator,
+}: {
+  hasLiveBridge: boolean;
+  isMock: boolean;
+  simulator: ActiveSimulator | undefined;
+  activeSimulator: ActiveSimulator | undefined;
+}): boolean {
+  if (!hasLiveBridge || isMock || !simulator) return false;
+  return simulator === activeSimulator;
+}

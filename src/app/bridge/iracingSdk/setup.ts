@@ -13,6 +13,7 @@ import {
   getSimulatorOverride,
   resolveSimulatorPreference,
   resolveWithoutProbing,
+  shouldReuseBridge,
 } from './simSelection';
 import { getCurrentProfileId, getDashboard } from '../../storage/dashboards';
 
@@ -131,11 +132,6 @@ async function setupBridge(
   channelBus?: ChannelBus
 ) {
   try {
-    if (currentBridge) {
-      currentBridge.stop();
-      currentBridge = undefined;
-    }
-
     const isTapeReplay = Boolean(process.env.IRDASHIES_TELEMETRY_REPLAY);
     const isMock =
       isDemoMode || (process.platform !== 'win32' && !isTapeReplay);
@@ -150,6 +146,26 @@ async function setupBridge(
           getSimulatorOverride(process.argv, process.env.IRDASHIES_SIM),
           available
         ) ?? resolveWithoutProbing(available));
+
+    // Resolved before anything is torn down, and entirely synchronously, so
+    // the decision sees the bridge that is actually up. Skipping here is what
+    // keeps a move between 'auto' and a pinned iRacing from disconnecting the
+    // overlays on a single-source build to rebuild the identical bridge.
+    if (
+      shouldReuseBridge({
+        hasLiveBridge: Boolean(currentBridge),
+        isMock,
+        simulator,
+        activeSimulator,
+      })
+    ) {
+      return;
+    }
+
+    if (currentBridge) {
+      currentBridge.stop();
+      currentBridge = undefined;
+    }
 
     const publishIRacingSDKEvents = isMock
       ? (await import('./mock-data/mockSdkBridge')).publishIRacingSDKEvents
