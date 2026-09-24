@@ -194,6 +194,15 @@ export function exposeBridge() {
       ipcRenderer.on('simulatorChanged', handler);
       return () => ipcRenderer.removeListener('simulatorChanged', handler);
     },
+    getSimWidgetSupport: () => {
+      return ipcRenderer.invoke('getSimWidgetSupport');
+    },
+    getSettingsShowAllWidgets: () => {
+      return ipcRenderer.invoke('getSettingsShowAllWidgets');
+    },
+    setSettingsShowAllWidgets: (showAll: boolean) => {
+      return ipcRenderer.invoke('setSettingsShowAllWidgets', showAll);
+    },
     saveGarageCoverImage: (buffer: Uint8Array) => {
       return ipcRenderer.invoke('saveGarageCoverImage', Array.from(buffer));
     },

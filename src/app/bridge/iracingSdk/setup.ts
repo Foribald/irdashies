@@ -59,7 +59,9 @@ export function setActiveSimulator(
 ) {
   if (simulator === activeSimulator) return;
   activeSimulator = simulator;
-  overlayManager.publishMessage('simulatorChanged', simulator ?? null);
+  // The manager publishes the change and rebuilds the overlays: the set of
+  // widgets this sim supports has changed, so windows have to be recreated.
+  overlayManager.setActiveSimulator(simulator ?? null);
 }
 
 export function onBridgeChanged(callback: (bridge: IrSdkSourceBridge) => void) {

@@ -15,3 +15,4 @@ export * from './useLovelyTrackData';
 export * from './useElementSize';
 export * from './useWidgetsForThisDisplay';
 export * from './useActiveSimulator';
+export * from './useSimWidgetSupport';

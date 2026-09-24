@@ -1,4 +1,5 @@
 import type { ActiveSimulator } from './simulators';
+import type { SimWidgetSupportConfig } from './simWidgetSupport';
 import type {
   DashboardLayout,
   DashboardProfile,
@@ -62,6 +63,10 @@ export interface DashboardBridge {
   onSimulatorChanged?: (
     callback: (value: ActiveSimulator | null) => void
   ) => (() => void) | undefined;
+  /** The per-simulator disabled-widget list, read from simWidgetSupport.json. */
+  getSimWidgetSupport?: () => Promise<SimWidgetSupportConfig>;
+  getSettingsShowAllWidgets?: () => Promise<boolean>;
+  setSettingsShowAllWidgets?: (showAll: boolean) => Promise<void>;
   getCurrentDashboard: () => DashboardLayout | null;
   saveGarageCoverImage: (buffer: Uint8Array) => Promise<string>;
   getGarageCoverImageAsDataUrl: (imagePath: string) => Promise<string | null>;
