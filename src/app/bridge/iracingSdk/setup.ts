@@ -24,6 +24,8 @@ let currentBridge: IrSdkSourceBridge | undefined;
  * it, and replayed to overlays that open later.
  */
 let activeSimulator: ActiveSimulator | undefined;
+/** Tail of the serialised rebuild chain. See queueBridgeSetup. */
+let bridgeSetupQueue: Promise<void> = Promise.resolve();
 const onBridgeChangedCallbacks = new Set<(bridge: IrSdkSourceBridge) => void>();
 
 // Singleton lifecycle — created once; survives bridge restarts so subscribers
@@ -75,10 +77,6 @@ export async function iRacingSDKSetup(
 ) {
   ipcMain.on('toggleDemoMode', async (_, value: boolean) => {
     isDemoMode = value;
-    if (currentBridge) {
-      currentBridge.stop();
-      currentBridge = undefined;
-    }
 
     // Flip the UI immediately; the data source swaps underneath. Otherwise the
     // mode change is gated behind the full bridge teardown/rebuild below
@@ -88,19 +86,44 @@ export async function iRacingSDKSetup(
       await import('../dashboard/dashboardBridge');
     notifyDemoModeChanged(value);
 
-    await setupBridge(overlayManager, channelBus);
+    await queueBridgeSetup(overlayManager, channelBus);
   });
 
   // The preference itself is persisted with the rest of the dashboard; this
   // only rebuilds the bridge so the change takes effect without a restart.
   ipcMain.on('simulatorPreferenceChanged', async () => {
-    await setupBridge(overlayManager, channelBus);
+    await queueBridgeSetup(overlayManager, channelBus);
   });
 
   ipcMain.handle('getActiveSimulator', () => activeSimulator ?? null);
   ipcMain.handle('getAvailableSimulators', () => getAvailableSimulators());
 
-  await setupBridge(overlayManager, channelBus);
+  await queueBridgeSetup(overlayManager, channelBus);
+}
+
+/**
+ * Serialises bridge rebuilds.
+ *
+ * setupBridge stops the current bridge, clears the handle, and only then awaits
+ * its replacement. Two overlapping calls would both sail past that stop with
+ * nothing left to stop, and the first bridge would be overwritten without ever
+ * being stopped -- its telemetry loop and running-state interval publishing for
+ * the rest of the session. Overlapping calls are ordinary rather than rare: the
+ * simulator dropdown fires a change per keystroke when arrowed through, and a
+ * demo-mode toggle can land on top of one.
+ *
+ * A failed rebuild must not wedge the queue, so the chain swallows rejections;
+ * setupBridge logs and rethrows for the caller that asked for this rebuild.
+ */
+function queueBridgeSetup(
+  overlayManager: OverlayManager,
+  channelBus?: ChannelBus
+): Promise<void> {
+  const next = bridgeSetupQueue
+    .catch(() => undefined)
+    .then(() => setupBridge(overlayManager, channelBus));
+  bridgeSetupQueue = next.catch(() => undefined);
+  return next;
 }
 
 async function setupBridge(

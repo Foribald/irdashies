@@ -58,12 +58,24 @@ export async function publishAutoDetectedSdkEvents(
 
   void (async () => {
     const definitions = getSimDefinitions();
-    const probes = await Promise.all(
-      definitions.map(async (definition) => ({
-        id: definition.id,
-        probe: await definition.createProbe(),
-      }))
-    );
+    // Per-definition rather than a bare Promise.all: one source whose native
+    // module is missing or wedged should drop out of the running, not reject
+    // the batch and end detection for every other simulator.
+    const probes = (
+      await Promise.all(
+        definitions.map(async (definition) => {
+          try {
+            return { id: definition.id, probe: await definition.createProbe() };
+          } catch (error) {
+            logger.error(
+              `[autoDetectSdkBridge] Failed to create ${definition.id} probe`,
+              error
+            );
+            return undefined;
+          }
+        })
+      )
+    ).filter((entry) => entry !== undefined);
     if (shouldStop) return;
 
     stopProbes = () =>
@@ -124,9 +136,14 @@ export async function publishAutoDetectedSdkEvents(
     // Only known once the probe settles, so the settings window shows nothing
     // until here rather than guessing.
     const { setActiveSimulator } = await import('./setup');
+    // A newer setupBridge may have stopped this detector while it awaited the
+    // import. Writing the simulator now would name a sim the newer setup has
+    // already replaced, and rebuild every overlay for it.
+    if (shouldStop) return;
     setActiveSimulator(overlayManager, simulator);
 
     const publishEvents = await definition.loadBridge();
+    if (shouldStop) return;
     const bridge = await publishEvents(overlayManager, lifecycle, channelBus);
     if (shouldStop) {
       bridge.stop();

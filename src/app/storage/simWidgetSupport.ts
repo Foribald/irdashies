@@ -29,7 +29,21 @@ let cached: SimWidgetSupportConfig | undefined;
 export const getSimWidgetSupport = (): SimWidgetSupportConfig => {
   if (cached) return cached;
 
-  const target = filePath();
+  let target: string;
+  try {
+    target = filePath();
+  } catch (error) {
+    // Resolving the user-data path can fail before the app is ready. This is
+    // consulted on every window build, so it falls back rather than taking
+    // window creation down with it.
+    logger.error(
+      `[simWidgetSupport] Failed to resolve ${FILENAME} path`,
+      error
+    );
+    cached = { ...DEFAULT_SIM_WIDGET_SUPPORT };
+    return cached;
+  }
+
   try {
     if (fs.existsSync(target)) {
       cached = normalizeSimWidgetSupport(

@@ -126,7 +126,13 @@ export class OverlayManager {
     this.activeSimulator = simulator;
     this.publishMessage('simulatorChanged', simulator);
     if (this.currentDashboard) {
-      this.forceRefreshOverlays(this.currentDashboard);
+      // Overlays only. createSettingsWindow show()s and focus()es an existing
+      // window, so refreshing with the default would drag a settings window the
+      // user had hidden to the tray back to the front every time the sim
+      // changed -- including when auto-detection settles mid-session.
+      this.forceRefreshOverlays(this.currentDashboard, {
+        createSettingsWindow: false,
+      });
     }
   }
   private isLocked = true;
@@ -889,10 +895,13 @@ export class OverlayManager {
   /**
    * Force refresh by closing all overlay windows and recreating them
    */
-  public forceRefreshOverlays(dashboardLayout?: DashboardLayout): void {
+  public forceRefreshOverlays(
+    dashboardLayout?: DashboardLayout,
+    options: { createSettingsWindow?: boolean } = {}
+  ): void {
     this.closeAllOverlays();
     if (dashboardLayout) {
-      this.createOverlays(dashboardLayout);
+      this.createOverlays(dashboardLayout, options);
     } else {
       const allDisplays = screen.getAllDisplays();
       const primaryDisplay = screen.getPrimaryDisplay();
@@ -1059,9 +1068,10 @@ export class OverlayManager {
     const gantryWidget = dashboardLayout?.widgets.find(
       (w) => w.id === 'gantry'
     );
-    if (!gantryWidget?.enabled) {
+    if (!gantryWidget || !this.isWidgetVisible(gantryWidget)) {
       logger.info(
-        '[OverlayManager] Gantry window requested but the widget is disabled'
+        '[OverlayManager] Gantry window requested but the widget is disabled' +
+          ' or unsupported by the running simulator'
       );
       return false;
     }
@@ -1153,8 +1163,12 @@ export class OverlayManager {
    * toggling the widget or switching profile takes effect without a restart.
    */
   public syncGantryWindow(dashboardLayout?: DashboardLayout): void {
-    const enabled = !!dashboardLayout?.widgets.find((w) => w.id === 'gantry')
-      ?.enabled;
+    // The same visibility rule as the overlay windows: the Gantry has its own
+    // window, but a sim that cannot support it must close that window too.
+    const gantryWidget = dashboardLayout?.widgets.find(
+      (w) => w.id === 'gantry'
+    );
+    const enabled = !!gantryWidget && this.isWidgetVisible(gantryWidget);
     const wasEnabled = this.gantryEnabled;
     this.gantryEnabled = enabled;
 
