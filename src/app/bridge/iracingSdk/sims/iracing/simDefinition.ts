@@ -3,8 +3,13 @@ import type { SimDefinition, SimProbe } from '../types';
 /**
  * iRacing, the built-in telemetry source.
  *
- * Highest priority: it is the one simulator always present in the tree, so on
- * a build with no others `auto` resolves to it without probing at all.
+ * Priority is the auto-detect tie-break, used only when more than one source
+ * is running at once. 100 is the baseline a second source is measured against:
+ * one that should win a tie gives itself a higher number, one that should
+ * defer gives itself a lower one.
+ *
+ * It has nothing to do with being the only source in the tree -- with nothing
+ * to choose between, `auto` resolves here without probing at all.
  */
 const iracing: SimDefinition = {
   id: 'iracing',
