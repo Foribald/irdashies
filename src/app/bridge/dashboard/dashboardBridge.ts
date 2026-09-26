@@ -37,7 +37,7 @@ import {
   getSettingsShowAllWidgets,
   setSettingsShowAllWidgets,
 } from '../../storage/settingsPreferences';
-import { getSimWidgetSupport } from '../../storage/simWidgetSupport';
+import { loadSimWidgetSupport } from '../../storage/simWidgetSupport';
 import {
   getAnalyticsOptOut as getAnalyticsOptOutStorage,
   setAnalyticsOptOut as setAnalyticsOptOutStorage,
@@ -405,7 +405,7 @@ export async function publishDashboardUpdates(
       }
     }
   );
-  ipcMain.handle('getSimWidgetSupport', () => getSimWidgetSupport());
+  ipcMain.handle('getSimWidgetSupport', () => loadSimWidgetSupport());
 
   ipcMain.handle('getSettingsShowAllWidgets', () =>
     getSettingsShowAllWidgets()
