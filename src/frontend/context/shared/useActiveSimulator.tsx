@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { SIMULATOR_IDS, type ActiveSimulator } from '@irdashies/types';
+import { useDashboardBridge } from '../DashboardContext/DashboardContext';
 
 /**
  * The simulator currently feeding telemetry, or null when none has been
@@ -8,6 +9,7 @@ import { SIMULATOR_IDS, type ActiveSimulator } from '@irdashies/types';
  * change event would leave it blank for the whole session.
  */
 export const useActiveSimulator = (): ActiveSimulator | null => {
+  const bridge = useDashboardBridge();
   const [simulator, setSimulator] = useState<ActiveSimulator | null>(null);
 
   useEffect(() => {
@@ -21,14 +23,12 @@ export const useActiveSimulator = (): ActiveSimulator | null => {
 
     // Subscribed before the request is made, so a change that lands while it is
     // in flight is seen rather than missed.
-    const unsubscribe = window.dashboardBridge?.onSimulatorChanged?.(
-      (value) => {
-        sawChange = true;
-        setSimulator(value);
-      }
-    );
+    const unsubscribe = bridge?.onSimulatorChanged?.((value) => {
+      sawChange = true;
+      setSimulator(value);
+    });
 
-    void window.dashboardBridge?.getActiveSimulator?.().then((value) => {
+    void bridge?.getActiveSimulator?.().then((value) => {
       if (!cancelled && !sawChange) setSimulator(value);
     });
 
@@ -36,7 +36,7 @@ export const useActiveSimulator = (): ActiveSimulator | null => {
       cancelled = true;
       unsubscribe?.();
     };
-  }, []);
+  }, [bridge]);
 
   return simulator;
 };
@@ -61,11 +61,12 @@ export const useActiveSimulator = (): ActiveSimulator | null => {
  * dropdown permanently greyed.
  */
 export const useAvailableSimulators = (): ActiveSimulator[] => {
+  const bridge = useDashboardBridge();
   const [available, setAvailable] = useState<ActiveSimulator[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    const request = window.dashboardBridge?.getAvailableSimulators?.();
+    const request = bridge?.getAvailableSimulators?.();
     if (!request) {
       setAvailable(SIMULATOR_IDS);
       return;
@@ -76,7 +77,7 @@ export const useAvailableSimulators = (): ActiveSimulator[] => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bridge]);
 
   return available;
 };

@@ -29,6 +29,14 @@ let activeSimulator: ActiveSimulator | undefined;
 /** Tail of the serialised rebuild chain. See queueBridgeSetup. */
 let bridgeSetupQueue: Promise<void> = Promise.resolve();
 const onBridgeChangedCallbacks = new Set<(bridge: IrSdkSourceBridge) => void>();
+/**
+ * Main-process listeners for the running simulator. The overlay windows are
+ * told through OverlayManager; this is for the parts of main that have no
+ * window to receive that message -- the browser bridge proxy.
+ */
+const onSimulatorChangedCallbacks = new Set<
+  (simulator: ActiveSimulator | null) => void
+>();
 
 // Singleton lifecycle — created once; survives bridge restarts so subscribers
 // registered before a demo-mode toggle are preserved.
@@ -66,6 +74,27 @@ export function setActiveSimulator(
   // The manager publishes the change and rebuilds the overlays: the set of
   // widgets this sim supports has changed, so windows have to be recreated.
   overlayManager.setActiveSimulator(simulator ?? null);
+  onSimulatorChangedCallbacks.forEach((callback) => {
+    try {
+      callback(simulator ?? null);
+    } catch (err) {
+      logger.error('Error in simulator changed callback:', err);
+    }
+  });
+}
+
+/**
+ * Subscribes to the running simulator from inside the main process.
+ *
+ * Browser views are not BrowserWindows, so OverlayManager's publish never
+ * reaches them; the bridge proxy uses this to forward the change over its
+ * WebSocket instead.
+ */
+export function onActiveSimulatorChanged(
+  callback: (simulator: ActiveSimulator | null) => void
+) {
+  onSimulatorChangedCallbacks.add(callback);
+  return () => onSimulatorChangedCallbacks.delete(callback);
 }
 
 export function onBridgeChanged(callback: (bridge: IrSdkSourceBridge) => void) {
