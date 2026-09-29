@@ -1,0 +1,202 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OverlayManager } from '../../overlayManager';
+import type { SessionLifecycle } from '../../sessionLifecycle';
+
+/**
+ * The LMU bridge's telemetry loop is the only thing that ever reports the sim
+ * going away -- unlike the iRacing bridge, it has no running-state poll outside
+ * the loop. These specs cover what the loop failing outright does, because that
+ * is the path that decides whether a crashed LMU leaves the overlays (and the
+ * auto-detector looking for another simulator) believing it is still alive.
+ */
+
+const sdkState = vi.hoisted(() => ({
+  running: true,
+  /** Makes every shared-memory read throw, as a vanished mapping would. */
+  readThrows: false,
+}));
+
+const rawFrame = () => {
+  if (sdkState.readThrows) throw new Error('shared memory read failed');
+  return {
+    running: sdkState.running,
+    gameVersion: 1,
+    trackName: 'Test Track',
+    session: 1,
+    gamePhase: 5,
+    numVehicles: 2,
+    activeVehicles: 2,
+    playerVehicleIdx: 0,
+    lapDist: 5000,
+    speed: 0,
+    speedLimiter: 0,
+    unfilteredThrottle: 0,
+    unfilteredBrake: 1,
+    vehInPits: [0, 0],
+    sectorFlags: new Uint8Array([0, 0, 0]),
+    vehSector: [1, 1],
+    vehLastSector1: [0, 0],
+    vehLastSector2: [0, 0],
+    vehLastLapTime: [0, 0],
+  };
+};
+
+vi.mock('../../irsdk/native/lmu', () => ({
+  NativeLmu: class {
+    start = vi.fn(() => true);
+    stop = vi.fn(() => true);
+    isRunning = vi.fn(() => sdkState.running);
+    read = vi.fn(rawFrame);
+    readSession = vi.fn(() => ({ ...rawFrame(), classes: [], drivers: [] }));
+  },
+}));
+
+// Only ever referenced as a type by the bridge, but stubbed so the spec does
+// not drag the real window manager in.
+vi.mock('../../overlayManager', () => ({ OverlayManager: vi.fn() }));
+
+vi.mock('../../logger', () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp/irdashies-spec' },
+}));
+
+vi.mock('../../perfRunConfig', () => ({
+  getPerfRunConfig: () => ({ enabled: false }),
+}));
+
+vi.mock('../../perfMetrics', () => ({
+  TelemetryPerfMetrics: class {
+    startReporting = vi.fn();
+    stopReporting = vi.fn();
+    markStart = vi.fn();
+    markEnd = vi.fn();
+    tick = vi.fn();
+  },
+}));
+
+vi.mock('../../processors/processorRegistry', () => ({
+  createDefaultProcessorHost: vi.fn(),
+}));
+
+// Keeps the track-map work off the filesystem.
+vi.mock('../../irsdk/lmu/trackMap', () => ({
+  loadLmuTrackMap: () => null,
+  tinyPedalTrackMapDirectories: () => [],
+  LmuTrackMapRecorder: class {
+    reset = vi.fn();
+    update = vi.fn(() => null);
+  },
+  LmuTrackMapStorage: class {
+    save = vi.fn();
+  },
+}));
+
+// Mapping is covered by its own specs; here it only has to not be the thing
+// that throws.
+vi.mock('../../irsdk/lmu/mapTelemetry', () => ({
+  mapLmuTelemetry: () => ({}),
+  mapLmuCarLeftRight: () => 0,
+}));
+
+vi.mock('../../irsdk/lmu/mapSession', () => ({
+  mapLmuSession: () => ({ drivers: [] }),
+}));
+
+vi.mock('../../irsdk/lmu/sessionSignature', () => ({
+  lmuSessionSignature: () => 'signature',
+}));
+
+const createOverlayManager = () =>
+  ({
+    onOverlayReady: vi.fn(),
+    publishMessage: vi.fn(),
+    publishMessageToOverlay: vi.fn(),
+    clearLatestSessionData: vi.fn(),
+    hasTelemetryInspectorSubscribers: vi.fn(() => false),
+  }) as unknown as OverlayManager;
+
+const createLifecycle = () =>
+  ({
+    _onEnter: vi.fn(),
+    _onDisconnect: vi.fn(),
+    _onTelemetry: vi.fn(),
+    _onSession: vi.fn(),
+  }) as unknown as SessionLifecycle;
+
+const runningStatesPublished = (overlayManager: OverlayManager) =>
+  vi
+    .mocked(overlayManager.publishMessage)
+    .mock.calls.filter(([channel]) => channel === 'runningState')
+    .map(([, value]) => value);
+
+describe('publishLmuSDKEvents when the telemetry loop fails', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sdkState.running = true;
+    sdkState.readThrows = false;
+  });
+
+  it('reports the sim as no longer running', async () => {
+    // Otherwise a crash mid-session leaves the overlays on a running state
+    // that nothing will ever correct, and auto-detect never looks elsewhere.
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    const observed: boolean[] = [];
+    bridge.onRunningState((value) => observed.push(value));
+    await vi.waitFor(() => expect(observed).toContain(true));
+
+    sdkState.readThrows = true;
+
+    await vi.waitFor(() => expect(observed).toContain(false));
+    expect(runningStatesPublished(overlayManager)).toContain(false);
+    bridge.stop();
+  });
+
+  it('releases the session it was holding', async () => {
+    const overlayManager = createOverlayManager();
+    const lifecycle = createLifecycle();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager, lifecycle);
+
+    await vi.waitFor(() => expect(lifecycle._onEnter).toHaveBeenCalled());
+    sdkState.readThrows = true;
+
+    await vi.waitFor(() => expect(lifecycle._onDisconnect).toHaveBeenCalled());
+    // New overlay windows opened after the crash must not be seeded with the
+    // dead session's data.
+    expect(overlayManager.clearLatestSessionData).toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it('stays quiet when it fails before the sim was ever seen running', async () => {
+    // The guard is on lastRunningState rather than the loop's own wasRunning,
+    // so a bridge that never connected must not announce a disconnect it never
+    // had.
+    sdkState.running = false;
+    sdkState.readThrows = true;
+    const overlayManager = createOverlayManager();
+    const lifecycle = createLifecycle();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager, lifecycle);
+
+    const { default: logger } = await import('../../logger');
+    await vi.waitFor(() =>
+      expect(logger.error).toHaveBeenCalledWith(
+        '[lmuSdkBridge] Telemetry loop failed',
+        expect.anything()
+      )
+    );
+
+    expect(lifecycle._onDisconnect).not.toHaveBeenCalled();
+    expect(overlayManager.clearLatestSessionData).not.toHaveBeenCalled();
+    // Only the seeded false from construction: publishRunningState must not
+    // announce a change that did not happen.
+    expect(runningStatesPublished(overlayManager)).toEqual([false]);
+    bridge.stop();
+  });
+});
