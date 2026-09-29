@@ -14,6 +14,11 @@ vi.mock('./setup', () => setup);
  * A sim whose probe and bridge are both driven by hand: `probe.active` decides
  * what auto-detect sees while probing, and `emitRunningState` simulates the
  * attached bridge's own connect/disconnect events once selected.
+ *
+ * The replay on subscribe is what every real bridge does: each seeds its
+ * running state while being built -- before auto-detect can subscribe -- and
+ * then publishes only on a change, so without the replay a subscriber would
+ * never learn the sim was up.
  */
 function fakeSim(id: ActiveSimulator, priority: number) {
   const probe = { active: false, stopped: false };
