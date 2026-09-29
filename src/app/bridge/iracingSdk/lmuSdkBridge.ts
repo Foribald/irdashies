@@ -338,6 +338,17 @@ export async function publishLmuSDKEvents(
     }
   })().catch((error) => {
     logger.error('[lmuSdkBridge] Telemetry loop failed', error);
+    // This loop is the only thing in this bridge that ever reports LMU going
+    // away -- unlike the iRacing bridge, there is no running-state poll
+    // outside it. Staying quiet here would leave the overlays, and the
+    // auto-detector deciding whether to look for another simulator, believing
+    // a dead source is still feeding them.
+    if (lastRunningState) {
+      latestSession = null;
+      overlayManager.clearLatestSessionData?.();
+      lifecycle?._onDisconnect();
+    }
+    publishRunningState(false);
   });
 
   return {

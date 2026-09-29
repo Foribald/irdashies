@@ -65,10 +65,10 @@ describe('publishAutoDetectedSdkEvents', () => {
 
   it('selects the simulator that probes as active', async () => {
     const iracing = fakeSim('iracing', 100);
-    const lmu = fakeSim('lmu', 110);
+    const lmu = fakeSim('lmu', 90);
     iracing.probe.active = true;
     vi.doMock('./sims/registry', () => ({
-      getSimDefinitions: () => [lmu.definition, iracing.definition],
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
     }));
 
     const { publishAutoDetectedSdkEvents } =
@@ -84,10 +84,10 @@ describe('publishAutoDetectedSdkEvents', () => {
 
   it('resumes detection and switches sims once the active one disconnects', async () => {
     const iracing = fakeSim('iracing', 100);
-    const lmu = fakeSim('lmu', 110);
+    const lmu = fakeSim('lmu', 90);
     lmu.probe.active = true;
     vi.doMock('./sims/registry', () => ({
-      getSimDefinitions: () => [lmu.definition, iracing.definition],
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
     }));
 
     const { publishAutoDetectedSdkEvents } =
@@ -128,7 +128,7 @@ describe('publishAutoDetectedSdkEvents', () => {
   });
 
   it('does not restart detection on the bridge reporting inactive before it ever connects', async () => {
-    const lmu = fakeSim('lmu', 110);
+    const lmu = fakeSim('lmu', 90);
     lmu.probe.active = true;
     // Overrides onRunningState to replay `false` first, as a bridge that has
     // not connected yet would.

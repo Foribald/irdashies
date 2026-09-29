@@ -3,13 +3,13 @@ import type { SimDefinition, SimProbe } from '../types';
 /**
  * Le Mans Ultimate, read through its shared-memory map.
  *
- * Priority is higher than iRacing's: LMU's shared-memory map can linger
- * briefly after the sim closes, so when both read as active at once during
- * auto-detect, LMU wins the tie rather than iRacing.
+ * Priority sits below iRacing's 100, so iRacing takes any tie: with both sims
+ * reading as active at once, the one this app was built around is the safer
+ * guess at which the driver is actually sitting in.
  */
 const lmu: SimDefinition = {
   id: 'lmu',
-  priority: 110,
+  priority: 90,
 
   createProbe: async (): Promise<SimProbe> => {
     const { NativeLmu } = await import('../../../../irsdk/native/lmu');
