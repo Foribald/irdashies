@@ -127,6 +127,53 @@ describe('publishAutoDetectedSdkEvents', () => {
     expect(runningStates).toEqual([true, false, true]);
   });
 
+  it('goes back to naming no simulator when the active one dies with nothing to replace it', async () => {
+    // The settings header names the running sim, and widgets are filtered by
+    // it. A crash with nothing else running therefore has to leave both where
+    // they were at startup, rather than going on naming a dead source and
+    // hiding the widgets it did not support.
+    const iracing = fakeSim('iracing', 100);
+    const lmu = fakeSim('lmu', 90);
+    lmu.probe.active = true;
+    vi.doMock('./sims/registry', () => ({
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
+    }));
+
+    const { publishAutoDetectedSdkEvents } =
+      await import('./autoDetectSdkBridge');
+    const facade = await publishAutoDetectedSdkEvents(overlayManager);
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+        overlayManager,
+        'lmu'
+      )
+    );
+
+    const runningStates: boolean[] = [];
+    facade.onRunningState((value) => runningStates.push(value));
+
+    // LMU dies and nothing else is running.
+    lmu.probe.active = false;
+    lmu.emitRunningState(false);
+
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+        overlayManager,
+        undefined
+      )
+    );
+    expect(lmu.bridge.stop).toHaveBeenCalled();
+    expect(runningStates).toEqual([true, false]);
+
+    // And it stays that way while probing, rather than settling back on the
+    // sim that just died.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+      overlayManager,
+      undefined
+    );
+  });
+
   it('does not restart detection on the bridge reporting inactive before it ever connects', async () => {
     const lmu = fakeSim('lmu', 90);
     lmu.probe.active = true;
