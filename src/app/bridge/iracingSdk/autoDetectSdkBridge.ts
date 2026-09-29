@@ -1,4 +1,9 @@
-import type { IrSdkSourceBridge, Session, Telemetry } from '@irdashies/types';
+import type {
+  ActiveSimulator,
+  IrSdkSourceBridge,
+  Session,
+  Telemetry,
+} from '@irdashies/types';
 import type { OverlayManager } from '../../overlayManager';
 import logger from '../../logger';
 import type { SessionLifecycle } from '../../sessionLifecycle';
@@ -20,6 +25,12 @@ const RETRY_INTERVAL = 1000;
  * while detection is still running, and forwards to the real bridge once one
  * exists. Subscribers therefore do not have to care that the source arrived
  * late.
+ *
+ * Detection also resumes after the attached sim disconnects, rather than
+ * ending permanently the first time one is picked. Each sim's own bridge only
+ * knows how to wait for that one sim to come back, so without this a session
+ * that closes LMU and opens iRacing instead would sit deaf to iRacing until
+ * the whole app restarted.
  */
 export async function publishAutoDetectedSdkEvents(
   overlayManager: OverlayManager,
@@ -27,18 +38,32 @@ export async function publishAutoDetectedSdkEvents(
   channelBus?: ChannelBus
 ): Promise<IrSdkSourceBridge> {
   let activeBridge: IrSdkSourceBridge | undefined;
+  let detachActiveBridge: (() => void) | undefined;
   let shouldStop = false;
   let stopProbes: (() => void) | undefined;
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
   const runningStateCallbacks = new Set<(value: boolean) => void>();
   let lastRunningState: boolean | undefined;
-  const activeUnsubscribers: (() => void)[] = [];
 
   overlayManager.publishMessage('runningState', false);
 
-  const attachBridge = (bridge: IrSdkSourceBridge) => {
+  const detachAndStopActiveBridge = () => {
+    detachActiveBridge?.();
+    detachActiveBridge = undefined;
+    activeBridge?.stop();
+    activeBridge = undefined;
+  };
+
+  const attachBridge = (
+    bridge: IrSdkSourceBridge,
+    simulator: ActiveSimulator
+  ) => {
     activeBridge = bridge;
+    // Only a transition from running to not-running is a disconnect worth
+    // reacting to -- the initial callback replay of a bridge that has not
+    // connected yet must not immediately restart detection.
+    let sawRunning = false;
     const subscriptions = [
       bridge.onTelemetry((value) =>
         telemetryCallbacks.forEach((callback) => callback(value))
@@ -49,15 +74,32 @@ export async function publishAutoDetectedSdkEvents(
       bridge.onRunningState((value) => {
         lastRunningState = value;
         runningStateCallbacks.forEach((callback) => callback(value));
+        if (value) {
+          sawRunning = true;
+          return;
+        }
+        if (sawRunning && !shouldStop) {
+          logger.info(
+            `[autoDetectSdkBridge] ${simulator} disconnected; resuming detection`
+          );
+          detachAndStopActiveBridge();
+          void runDetectionCycle();
+        }
       }),
     ];
-    subscriptions.forEach((unsubscribe) => {
-      if (unsubscribe) activeUnsubscribers.push(unsubscribe);
-    });
+    detachActiveBridge = () =>
+      subscriptions.forEach((unsubscribe) => unsubscribe?.());
   };
 
-  void (async () => {
-    const definitions = getSimDefinitions();
+  const definitions = getSimDefinitions();
+
+  /**
+   * Probes every registered sim until one is running, then hands off to it.
+   * Re-entered from attachBridge whenever the attached sim disconnects, so
+   * a build with several sources keeps looking for whichever one is actually
+   * running rather than freezing on the first pick.
+   */
+  const runDetectionCycle = async () => {
     // Per-definition rather than a bare Promise.all: one source whose native
     // module is missing or wedged should drop out of the running, not reject
     // the batch and end detection for every other simulator.
@@ -103,6 +145,13 @@ export async function publishAutoDetectedSdkEvents(
       }
     };
 
+    // Only known once the probe settles, so the settings window shows
+    // nothing -- rather than a sim that has just disconnected -- while this
+    // cycle looks for whatever runs next.
+    const { setActiveSimulator } = await import('./setup');
+    if (shouldStop) return;
+    setActiveSimulator(overlayManager, undefined);
+
     let simulator: ReturnType<typeof selectDetectedSimulator>;
     let lastProbeState = '';
     while (!shouldStop && !simulator) {
@@ -133,9 +182,6 @@ export async function publishAutoDetectedSdkEvents(
     const definition = definitions.find(({ id }) => id === simulator);
     if (!definition) return;
 
-    // Only known once the probe settles, so the settings window shows nothing
-    // until here rather than guessing.
-    const { setActiveSimulator } = await import('./setup');
     // A newer setupBridge may have stopped this detector while it awaited the
     // import. Writing the simulator now would name a sim the newer setup has
     // already replaced, and rebuild every overlay for it.
@@ -149,8 +195,10 @@ export async function publishAutoDetectedSdkEvents(
       bridge.stop();
       return;
     }
-    attachBridge(bridge);
-  })().catch((error) => {
+    attachBridge(bridge, simulator);
+  };
+
+  void runDetectionCycle().catch((error) => {
     logger.error('[autoDetectSdkBridge] Failed to detect simulator', error);
     stopProbes?.();
   });
@@ -172,8 +220,7 @@ export async function publishAutoDetectedSdkEvents(
     stop: () => {
       shouldStop = true;
       stopProbes?.();
-      activeUnsubscribers.forEach((unsubscribe) => unsubscribe());
-      activeBridge?.stop();
+      detachAndStopActiveBridge();
       telemetryCallbacks.clear();
       sessionCallbacks.clear();
       runningStateCallbacks.clear();
