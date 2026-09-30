@@ -163,11 +163,24 @@ export function mapLmuTelemetry(
   const relativePositions = deriveLmuRelativePositions(raw);
 
   // Session-level
-  t.SessionTick = num(raw.currentET);
+  // Both clocks come from the player's mElapsedTime, measured at 100 Hz,
+  // rather than scoring's mCurrentET at 5 Hz. They are the same quantity --
+  // seconds since the session began -- but LapTrace timestamps every sample
+  // with SessionTime, so the 5 Hz one gave a fine distance axis against a
+  // 200 ms staircase in time. It also gates ProcessorHost.isDue, which cannot
+  // throttle on a clock that stands still.
+  //
+  // mElapsedTime is absent with no player car (spectating, garage), hence the
+  // fallback.
+  const sessionClock =
+    typeof raw.elapsedTime === 'number' && raw.elapsedTime >= 0
+      ? raw.elapsedTime
+      : raw.currentET;
+  t.SessionTick = num(sessionClock);
   t.SessionNum = num(raw.session);
   t.SessionUniqueID = num(raw.session);
   t.SessionState = num(PHASE_TO_SESSION_STATE[raw.gamePhase] ?? 0);
-  t.SessionTime = num(raw.currentET);
+  t.SessionTime = num(sessionClock);
   t.SessionTimeRemain = num(raw.sessionTimeRemaining);
   t.SessionTimeTotal = num(raw.endET);
   t.SessionLapsRemain = num(

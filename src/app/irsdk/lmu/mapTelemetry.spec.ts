@@ -8,8 +8,10 @@ import { createLmuLapDistanceState } from './lapDistance';
 describe('mapLmuTelemetry', () => {
   it('maps session scalars', () => {
     const t = mapLmuTelemetry(fixture());
-    expect(t.SessionTick.value[0]).toBe(1250.5);
-    expect(t.SessionTime.value[0]).toBe(1250.5);
+    // Both clocks are the player's 100 Hz mElapsedTime, not scoring's 5 Hz
+    // mCurrentET (1250.5 in the fixture). See the session-clock specs below.
+    expect(t.SessionTick.value[0]).toBe(250.4);
+    expect(t.SessionTime.value[0]).toBe(250.4);
     expect(t.SessionTimeTotal.value[0]).toBe(3600);
     expect(t.SessionTimeRemain.value[0]).toBe(2349.5);
     expect(t.SessionLapsTotal.value[0]).toBe(12);
@@ -299,5 +301,31 @@ describe('mapLmuTelemetry lap-distance reconstruction', () => {
       expect(value).toBeGreaterThanOrEqual(previous);
       previous = value;
     }
+  });
+});
+
+describe('mapLmuTelemetry session clock', () => {
+  it('takes the clock from the 100 Hz telemetry block', () => {
+    // Scoring's currentET only moves at 5 Hz, so LapTrace stamped every
+    // sample inside a 200 ms window with an identical time.
+    const raw = fixture();
+    raw.currentET = 1250.5;
+    raw.elapsedTime = 250.4;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.SessionTime?.value[0]).toBe(250.4);
+    expect(t.SessionTick?.value[0]).toBe(250.4);
+  });
+
+  it('falls back to scoring when there is no player car', () => {
+    // mElapsedTime is absent spectating and in the garage.
+    const raw = fixture();
+    raw.currentET = 1250.5;
+    raw.elapsedTime = undefined;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.SessionTime?.value[0]).toBe(1250.5);
   });
 });
