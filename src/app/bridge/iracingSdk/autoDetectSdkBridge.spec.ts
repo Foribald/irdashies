@@ -21,7 +21,7 @@ vi.mock('./setup', () => setup);
  * never learn the sim was up.
  */
 function fakeSim(id: ActiveSimulator, priority: number) {
-  const probe = { active: false, stopped: false };
+  const probe = { active: false, starts: 0, stops: 0 };
   let runningStateCallback: ((value: boolean) => void) | undefined;
   const bridge: IrSdkSourceBridge = {
     onTelemetry: () => () => undefined,
@@ -42,10 +42,12 @@ function fakeSim(id: ActiveSimulator, priority: number) {
     id,
     priority,
     createProbe: async () => ({
-      start: () => undefined,
+      start: () => {
+        probe.starts += 1;
+      },
       isActive: () => probe.active,
       stop: () => {
-        probe.stopped = true;
+        probe.stops += 1;
       },
     }),
     loadBridge: async () => async () => bridge,
@@ -61,6 +63,8 @@ function fakeSim(id: ActiveSimulator, priority: number) {
 const overlayManager = {
   publishMessage: vi.fn(),
 } as unknown as OverlayManager;
+
+const settled = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 describe('publishAutoDetectedSdkEvents', () => {
   beforeEach(() => {
@@ -79,18 +83,24 @@ describe('publishAutoDetectedSdkEvents', () => {
     const { publishAutoDetectedSdkEvents } =
       await import('./autoDetectSdkBridge');
     await publishAutoDetectedSdkEvents(overlayManager);
+
     await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
         overlayManager,
         'iracing'
       )
     );
+    // Named once, and never cleared on the way -- clearing rebuilds every
+    // overlay window, so the initial pick must cost exactly one write.
+    expect(setup.setActiveSimulator.mock.calls).toEqual([
+      [overlayManager, 'iracing'],
+    ]);
   });
 
-  it('resumes detection and switches sims once the active one disconnects', async () => {
+  it('switches to another simulator once the active one stops running', async () => {
     const iracing = fakeSim('iracing', 100);
     const lmu = fakeSim('lmu', 90);
-    lmu.probe.active = true;
+    iracing.probe.active = true;
     vi.doMock('./sims/registry', () => ({
       getSimDefinitions: () => [iracing.definition, lmu.definition],
     }));
@@ -99,115 +109,195 @@ describe('publishAutoDetectedSdkEvents', () => {
       await import('./autoDetectSdkBridge');
     const facade = await publishAutoDetectedSdkEvents(overlayManager);
     await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
         overlayManager,
-        'lmu'
+        'iracing'
       )
     );
 
     const runningStates: boolean[] = [];
     facade.onRunningState((value) => runningStates.push(value));
 
-    // LMU closes; iRacing has since started.
-    lmu.probe.active = false;
-    iracing.probe.active = true;
-    lmu.emitRunningState(false);
+    // iRacing closes; LMU has since started.
+    iracing.probe.active = false;
+    lmu.probe.active = true;
+    iracing.emitRunningState(false);
 
     await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
         overlayManager,
-        'iracing'
+        'lmu'
       )
     );
-    expect(lmu.bridge.stop).toHaveBeenCalled();
-    // Cleared before each cycle, then the sim that cycle settles on.
+    expect(iracing.bridge.stop).toHaveBeenCalled();
+    // Straight from one sim to the other: no undefined in between, so the
+    // overlays are rebuilt once rather than twice.
     expect(setup.setActiveSimulator.mock.calls).toEqual([
-      [overlayManager, undefined],
-      [overlayManager, 'lmu'],
-      [overlayManager, undefined],
       [overlayManager, 'iracing'],
+      [overlayManager, 'lmu'],
     ]);
-    // The initial replay of the still-running lmu bridge, then its
-    // disconnect, then the newly attached iracing bridge connecting.
+    // The replay of the running iracing bridge, its disconnect, then the newly
+    // attached lmu bridge connecting.
     expect(runningStates).toEqual([true, false, true]);
   });
 
-  it('goes back to naming no simulator when the active one dies with nothing to replace it', async () => {
-    // The settings header names the running sim, and widgets are filtered by
-    // it. A crash with nothing else running therefore has to leave both where
-    // they were at startup, rather than going on naming a dead source and
-    // hiding the widgets it did not support.
+  it('keeps the attached simulator when it comes back on its own', async () => {
+    // Leaving an iRacing session drops the running state without the sim
+    // closing. Tearing the bridge down for that would rebuild every overlay
+    // window twice per session, to end up exactly where it started.
     const iracing = fakeSim('iracing', 100);
     const lmu = fakeSim('lmu', 90);
-    lmu.probe.active = true;
+    iracing.probe.active = true;
     vi.doMock('./sims/registry', () => ({
       getSimDefinitions: () => [iracing.definition, lmu.definition],
-    }));
-
-    const { publishAutoDetectedSdkEvents } =
-      await import('./autoDetectSdkBridge');
-    const facade = await publishAutoDetectedSdkEvents(overlayManager);
-    await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
-        overlayManager,
-        'lmu'
-      )
-    );
-
-    const runningStates: boolean[] = [];
-    facade.onRunningState((value) => runningStates.push(value));
-
-    // LMU dies and nothing else is running.
-    lmu.probe.active = false;
-    lmu.emitRunningState(false);
-
-    await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
-        overlayManager,
-        undefined
-      )
-    );
-    expect(lmu.bridge.stop).toHaveBeenCalled();
-    expect(runningStates).toEqual([true, false]);
-
-    // And it stays that way while probing, rather than settling back on the
-    // sim that just died.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
-      overlayManager,
-      undefined
-    );
-  });
-
-  it('does not restart detection on the bridge reporting inactive before it ever connects', async () => {
-    const lmu = fakeSim('lmu', 90);
-    lmu.probe.active = true;
-    // Overrides onRunningState to replay `false` first, as a bridge that has
-    // not connected yet would.
-    lmu.bridge.onRunningState = (callback) => {
-      callback(false);
-      return () => undefined;
-    };
-    vi.doMock('./sims/registry', () => ({
-      getSimDefinitions: () => [lmu.definition],
     }));
 
     const { publishAutoDetectedSdkEvents } =
       await import('./autoDetectSdkBridge');
     await publishAutoDetectedSdkEvents(overlayManager);
     await vi.waitFor(() =>
-      expect(setup.setActiveSimulator).toHaveBeenLastCalledWith(
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
         overlayManager,
-        'lmu'
+        'iracing'
       )
     );
 
-    // A single cycle's worth of calls: cleared, then selected. No second
-    // selection -- the bridge is left alone rather than being torn down and
-    // re-probed for a disconnect that never happened.
+    // Out to the sim's own UI, then back into a session. LMU never runs.
+    iracing.emitRunningState(false);
+    await settled();
+    iracing.emitRunningState(true);
+    await settled();
+
+    expect(iracing.bridge.stop).not.toHaveBeenCalled();
     expect(setup.setActiveSimulator.mock.calls).toEqual([
-      [overlayManager, undefined],
-      [overlayManager, 'lmu'],
+      [overlayManager, 'iracing'],
     ]);
+  });
+
+  it('goes on naming a dead simulator when nothing replaces it', async () => {
+    // The name is what widget filtering follows, and a pinned sim keeps its
+    // name while closed. Auto has to behave the same, rather than un-hiding
+    // every widget the moment the sim goes quiet. The settings header stops
+    // showing it anyway, because that gates on the running state.
+    const iracing = fakeSim('iracing', 100);
+    const lmu = fakeSim('lmu', 90);
+    iracing.probe.active = true;
+    vi.doMock('./sims/registry', () => ({
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
+    }));
+
+    const { publishAutoDetectedSdkEvents } =
+      await import('./autoDetectSdkBridge');
+    const facade = await publishAutoDetectedSdkEvents(overlayManager);
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
+        overlayManager,
+        'iracing'
+      )
+    );
+
+    const runningStates: boolean[] = [];
+    facade.onRunningState((value) => runningStates.push(value));
+
+    // iRacing dies and nothing else is running.
+    iracing.probe.active = false;
+    iracing.emitRunningState(false);
+    await settled();
+
+    expect(setup.setActiveSimulator.mock.calls).toEqual([
+      [overlayManager, 'iracing'],
+    ]);
+    expect(iracing.bridge.stop).not.toHaveBeenCalled();
+    expect(runningStates).toEqual([true, false]);
+  });
+
+  it('does not go looking on a bridge reporting inactive before it ever connects', async () => {
+    // Auto-detect chose this sim on its probe. A bridge that has not finished
+    // connecting must not hand the session to a sim that lost the tie.
+    const iracing = fakeSim('iracing', 100);
+    const lmu = fakeSim('lmu', 90);
+    iracing.probe.active = true;
+    lmu.probe.active = true;
+    // Replays `false` first, as a bridge that has not connected yet would.
+    iracing.bridge.onRunningState = (callback) => {
+      callback(false);
+      return () => undefined;
+    };
+    vi.doMock('./sims/registry', () => ({
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
+    }));
+
+    const { publishAutoDetectedSdkEvents } =
+      await import('./autoDetectSdkBridge');
+    await publishAutoDetectedSdkEvents(overlayManager);
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
+        overlayManager,
+        'iracing'
+      )
+    );
+    await settled();
+
+    expect(setup.setActiveSimulator.mock.calls).toEqual([
+      [overlayManager, 'iracing'],
+    ]);
+    expect(iracing.bridge.stop).not.toHaveBeenCalled();
+  });
+
+  it('leaves the running simulator its own SDK handle while watching', async () => {
+    // The attached sim is excluded from the watchdog's probing, so its live
+    // bridge is not competing with a second handle on the same source.
+    const iracing = fakeSim('iracing', 100);
+    const lmu = fakeSim('lmu', 90);
+    iracing.probe.active = true;
+    vi.doMock('./sims/registry', () => ({
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
+    }));
+
+    const { publishAutoDetectedSdkEvents } =
+      await import('./autoDetectSdkBridge');
+    await publishAutoDetectedSdkEvents(overlayManager);
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
+        overlayManager,
+        'iracing'
+      )
+    );
+
+    const startsAfterDetection = iracing.probe.starts;
+    iracing.emitRunningState(false);
+    await settled();
+
+    expect(iracing.probe.starts).toBe(startsAfterDetection);
+    expect(lmu.probe.starts).toBeGreaterThan(0);
+  });
+
+  it('stops the watchdog probes when the facade is stopped', async () => {
+    const iracing = fakeSim('iracing', 100);
+    const lmu = fakeSim('lmu', 90);
+    iracing.probe.active = true;
+    vi.doMock('./sims/registry', () => ({
+      getSimDefinitions: () => [iracing.definition, lmu.definition],
+    }));
+
+    const { publishAutoDetectedSdkEvents } =
+      await import('./autoDetectSdkBridge');
+    const facade = await publishAutoDetectedSdkEvents(overlayManager);
+    await vi.waitFor(() =>
+      expect(setup.setActiveSimulator).toHaveBeenCalledWith(
+        overlayManager,
+        'iracing'
+      )
+    );
+
+    iracing.emitRunningState(false);
+    await settled();
+    const stopsWhileWatching = lmu.probe.stops;
+
+    facade.stop();
+    await settled();
+
+    expect(lmu.probe.stops).toBeGreaterThan(stopsWhileWatching);
+    expect(iracing.bridge.stop).toHaveBeenCalled();
   });
 });

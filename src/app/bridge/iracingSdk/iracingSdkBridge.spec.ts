@@ -71,11 +71,15 @@ describe('publishIRacingSDKEvents session polling', () => {
     vi.useRealTimers();
   });
 
-  const createOverlayManager = () => ({
-    onOverlayReady: vi.fn(),
-    publishMessage: vi.fn(),
-    publishMessageToOverlay: vi.fn(),
-  });
+  const createOverlayManager = () => {
+    const unsubscribeOverlayReady = vi.fn();
+    return {
+      onOverlayReady: vi.fn(() => unsubscribeOverlayReady),
+      unsubscribeOverlayReady,
+      publishMessage: vi.fn(),
+      publishMessageToOverlay: vi.fn(),
+    };
+  };
 
   it('publishes the running state as soon as the SDK produces data', async () => {
     // sessionStatusOK still reads false when the bridge seeds it, which is what
@@ -133,6 +137,20 @@ describe('publishIRacingSDKEvents session polling', () => {
     expect(seen).toEqual([false]);
 
     bridge.stop();
+  });
+
+  it('releases its overlay-ready listener when stopped', async () => {
+    // The bridge is rebuilt whenever the telemetry source changes. A listener
+    // left registered here goes on seeding every newly-opened overlay window
+    // with this dead bridge's last session.
+    const overlayManager = createOverlayManager();
+
+    const bridge = await publishIRacingSDKEvents(overlayManager as never);
+    expect(overlayManager.unsubscribeOverlayReady).not.toHaveBeenCalled();
+
+    bridge.stop();
+
+    expect(overlayManager.unsubscribeOverlayReady).toHaveBeenCalledOnce();
   });
 
   it('polls immediately and every 500 ms using monotonic time', async () => {

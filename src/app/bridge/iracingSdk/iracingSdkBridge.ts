@@ -174,7 +174,10 @@ export async function publishIRacingSDKEvents(
   const sessionCallbacks = new Set<(value: Session) => void>();
   const runningStateCallbacks = new Set<(value: boolean) => void>();
 
-  overlayManager.onOverlayReady((id) => {
+  // Held so `stop()` can release it. A bridge is rebuilt whenever the source
+  // changes, and a listener left behind here keeps seeding every newly-opened
+  // overlay with a dead bridge's last session.
+  const unsubscribeOverlayReady = overlayManager.onOverlayReady((id) => {
     logger.info(
       '[iracingSdkBridge] New window ready, sending initial data: ',
       id
@@ -384,6 +387,7 @@ export async function publishIRacingSDKEvents(
     },
     stop: () => {
       shouldStop = true;
+      unsubscribeOverlayReady?.();
       overlayManager.clearLatestSessionData?.();
       sdk.stopSDK();
       clearInterval(runningStateInterval);
