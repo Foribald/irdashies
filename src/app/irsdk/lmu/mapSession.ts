@@ -5,6 +5,8 @@ import type {
   LmuTrackMap,
 } from '@irdashies/types';
 
+import { lapTimeOrAbsent } from './sentinels';
+
 type Raw = import('../native/lmu').LmuRawSession;
 
 // LMU shared memory has no car numbers or series metadata. Drivers are
@@ -167,8 +169,11 @@ export function mapLmuSession(
       Lap: 0,
       Time: 0,
       FastestLap: 0,
-      FastestTime: d.bestLapTime,
-      LastTime: d.lastLapTime,
+      // createStandings prefers the telemetry frame and falls back to these
+      // whenever it has no time there, so an unnormalised zero here is what
+      // the standings end up rendering as "0:00.000".
+      FastestTime: lapTimeOrAbsent(d.bestLapTime),
+      LastTime: lapTimeOrAbsent(d.lastLapTime),
       LapsLed: 0,
       LapsComplete: d.totalLaps,
       JokerLapsComplete: 0,

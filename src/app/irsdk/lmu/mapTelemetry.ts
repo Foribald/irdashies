@@ -5,6 +5,7 @@ import {
   type Telemetry,
 } from '@irdashies/types';
 import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
+import { lapTimeOrAbsent } from './sentinels';
 import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
 
 type Raw = import('../native/lmu').LmuRawTelemetry;
@@ -60,12 +61,11 @@ const isOccupied = (raw: Raw, carIdx: number) =>
  * zero LMU writes for a car that is really there.
  */
 const lapTimeArr = (v: ArrayLike<number> | undefined) => ({
-  value: v ? Array.from(v, (time) => (time > 0 ? time : -1)) : [],
+  value: v ? Array.from(v, lapTimeOrAbsent) : [],
 });
 
 /** A lap time for a single car, under the same rule. */
-const lapTime = (v: number | undefined) =>
-  num(v !== undefined && v > 0 ? v : -1);
+const lapTime = (v: number | undefined) => num(lapTimeOrAbsent(v));
 
 /**
  * Per-car values where 0 is a legitimate reading, so only an empty slot may

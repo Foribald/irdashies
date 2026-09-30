@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mapLmuSession } from './app/irsdk/lmu/mapSession';
 import { mapLmuTelemetry } from './app/irsdk/lmu/mapTelemetry';
 import { fixture } from './app/irsdk/lmu/rawFixture';
+import { fixture as sessionFixture } from './app/irsdk/lmu/rawSessionFixture';
 import { formatTime } from './frontend/utils/time';
 
 /**
@@ -52,5 +54,21 @@ describe('LMU standings lap times through to the formatter', () => {
 
     expect(formatTime(times[0])).toBe('');
     expect(formatTime(times[1])).toBe('');
+  });
+});
+
+describe('LMU session results through to the formatter', () => {
+  it('renders nothing for a driver with no lap', () => {
+    // createStandings falls back to these whenever the telemetry frame has no
+    // time, so normalising only the frame left the zero showing here.
+    const raw = sessionFixture();
+    raw.drivers[0].bestLapTime = 0;
+    raw.drivers[0].lastLapTime = 0;
+
+    const s = mapLmuSession(raw);
+    const quali = s.SessionInfo?.Sessions?.[0]?.QualifyPositions ?? [];
+    const entry = quali.find((q) => q.CarIdx === 0);
+
+    expect(formatTime(entry?.FastestTime)).toBe('');
   });
 });

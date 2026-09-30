@@ -1,155 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { LmuRawSession } from '../native/lmu';
 import {
   deriveLmuShiftLightRpm,
   mapLmuSession,
   resolveLmuCarId,
   resolveLmuTrackId,
 } from './mapSession';
-
-function fixture(): LmuRawSession {
-  return {
-    running: true,
-    gameVersion: 1902,
-    trackName: 'Spa Francorchamps',
-    session: 2,
-    maxLaps: 12,
-    lapDist: 7004,
-    numVehicles: 3,
-    gamePhase: 4,
-    cloudCoverage: 10,
-    raining: 0,
-    ambientTemp: 23.5,
-    trackTemp: 31,
-    wind: [2, 0, -3],
-    engineMaxRPM: 9000,
-    fuelCapacity: 110,
-    maxGears: 6,
-    classes: [
-      { id: 0, name: 'GT3' },
-      { id: 1, name: 'GTE' },
-    ],
-    drivers: [
-      {
-        id: 0,
-        isPlayer: false,
-        name: 'Driver A',
-        vehicleName: 'Team WRT 2026 #32:WEC',
-        vehicleModel: 'BMW M4 GT3',
-        className: 'GT3',
-        vehFilename: 'ferrari_296_gt3',
-        classId: 0,
-        totalLaps: 2,
-        sector: 1,
-        finishStatus: 0,
-        lapDist: 2801,
-        bestSector1: 32.5,
-        bestSector2: 41.2,
-        bestLapTime: 134.5,
-        lastSector1: 33.1,
-        lastSector2: 42.0,
-        lastLapTime: 135.6,
-        numPitstops: 1,
-        numPenalties: 0,
-        inPits: 0,
-        place: 2,
-        timeBehindNext: 3.4,
-        lapsBehindNext: 0,
-        timeBehindLeader: 10.5,
-        lapsBehindLeader: 1,
-        qualification: 2,
-        timeIntoLap: 50,
-        estimatedLapTime: 134,
-        pitState: 0,
-        individualPhase: 10,
-        underYellow: 0,
-        countLapFlag: 1,
-        inGarageStall: 0,
-        pitLapDist: 0,
-        steamId: 111,
-        fuelFraction: 0.5,
-      },
-      {
-        id: 1,
-        isPlayer: true,
-        name: 'Driver B',
-        vehicleName: 'Ferrari 296 GT3',
-        vehicleModel: 'Ferrari 296 GT3',
-        className: 'GT3',
-        vehFilename: 'ferrari_296_gt3',
-        classId: 0,
-        totalLaps: 3,
-        sector: 1,
-        finishStatus: 0,
-        lapDist: 4202,
-        bestSector1: 32.1,
-        bestSector2: 40.8,
-        bestLapTime: 132.8,
-        lastSector1: 32.4,
-        lastSector2: 41.0,
-        lastLapTime: 133.4,
-        numPitstops: 0,
-        numPenalties: 0,
-        inPits: 0,
-        place: 1,
-        timeBehindNext: Infinity,
-        lapsBehindNext: 0,
-        timeBehindLeader: 0,
-        lapsBehindLeader: 0,
-        qualification: 1,
-        timeIntoLap: 60,
-        estimatedLapTime: 132,
-        pitState: 0,
-        individualPhase: 9,
-        underYellow: 0,
-        countLapFlag: 1,
-        inGarageStall: 0,
-        pitLapDist: 0,
-        steamId: 222,
-        fuelFraction: 0.4,
-      },
-      {
-        id: 3,
-        isPlayer: false,
-        name: 'Driver C',
-        vehicleName: 'Porsche 911 RSR',
-        vehicleModel: 'Porsche 911 RSR',
-        className: 'GTE',
-        vehFilename: 'porsche_911_rsr',
-        classId: 1,
-        totalLaps: 1,
-        sector: 2,
-        finishStatus: 0,
-        lapDist: 1400,
-        bestSector1: 40.1,
-        bestSector2: 51.5,
-        bestLapTime: 165.2,
-        lastSector1: 41.0,
-        lastSector2: 52.0,
-        lastLapTime: 166.0,
-        numPitstops: 0,
-        numPenalties: 0,
-        inPits: 0,
-        place: 3,
-        timeBehindNext: 5.6,
-        lapsBehindNext: 1,
-        timeBehindLeader: -1,
-        lapsBehindLeader: 0,
-        qualification: 0,
-        timeIntoLap: 20,
-        estimatedLapTime: 164,
-        pitState: 0,
-        individualPhase: 8,
-        underYellow: 0,
-        countLapFlag: 1,
-        inGarageStall: 0,
-        pitLapDist: 0,
-        steamId: 333,
-        fuelFraction: 0.7,
-      },
-    ],
-  } as unknown as LmuRawSession;
-}
+import { fixture } from './rawSessionFixture';
 
 describe('mapLmuSession', () => {
   it('maps weekend info', () => {
@@ -342,5 +198,34 @@ describe('mapLmuSession', () => {
   ])('maps LMU session %i to %s', (session, expected) => {
     const s = mapLmuSession({ ...fixture(), session });
     expect(s.SessionInfo.Sessions[0].SessionType).toBe(expected);
+  });
+});
+
+describe('mapLmuSession absent lap times', () => {
+  it('reports a driver with no lap as absent, not as zero', () => {
+    // These results are the fallback createStandings uses whenever the
+    // telemetry frame has no time for a car, so a zero here reaches
+    // formatTime and renders "0:00.000" -- which is what kept showing in the
+    // standings even after the telemetry frame was normalised.
+    const raw = fixture();
+    raw.drivers[0].bestLapTime = 0;
+    raw.drivers[0].lastLapTime = 0;
+    raw.drivers[1].bestLapTime = -1;
+    raw.drivers[1].lastLapTime = -1;
+
+    const s = mapLmuSession(raw);
+    const quali = s.SessionInfo?.Sessions?.[0]?.QualifyPositions ?? [];
+    const byCar = new Map(quali.map((q) => [q.CarIdx, q]));
+
+    expect(byCar.get(0)?.FastestTime).toBe(-1);
+    expect(byCar.get(1)?.FastestTime).toBe(-1);
+  });
+
+  it('leaves a real lap time alone', () => {
+    const s = mapLmuSession(fixture());
+    const quali = s.SessionInfo?.Sessions?.[0]?.QualifyPositions ?? [];
+    const byCar = new Map(quali.map((q) => [q.CarIdx, q]));
+
+    expect(byCar.get(0)?.FastestTime).toBe(134.5);
   });
 });
