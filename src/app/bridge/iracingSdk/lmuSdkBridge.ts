@@ -31,10 +31,29 @@ import {
 import { app } from 'electron';
 import path from 'node:path';
 
-// Poll cadence for the LMU shared-memory frame. LMU writes at the sim's
-// physics rate (~60 Hz); a fixed 16 ms poll keeps latency low without burning
-// CPU waiting between frames.
-const TELEMETRY_POLL_INTERVAL = 16;
+/**
+ * Poll cadence for the LMU shared-memory frame.
+ *
+ * LMU publishes telemetry at 100 Hz -- measured, not assumed: 999 frames in
+ * 10 s against LMU 14150, median gap 9.92 ms. Not the ~60 Hz this once
+ * claimed, which is where the 16 ms came from.
+ *
+ * 16 ms was close to the worst value available. The Windows timer tick is
+ * ~15.6 ms, so a 16 ms request cannot be met by the next tick and waits for
+ * the second one: measured in the Electron main process, setTimeout(16)
+ * delivered a 30.7 ms median -- 37 Hz against a 100 Hz writer, dropping ~60%
+ * of frames. 8 ms rounds to a single tick, 15.5 ms, 64 Hz.
+ *
+ * 64 Hz is the JS ceiling here. setTimeout(4) measured identically, and
+ * reaching 100 Hz needs a native capture thread.
+ *
+ * There is deliberately no gate on delivery. Because the poll is slower than
+ * the writer, nearly every poll carries a new frame -- the measured duplicate
+ * rate is 0.3% -- so a gate saves almost nothing while sitting in front of
+ * every telemetry consumer in the app, where it can silence all of them at
+ * once.
+ */
+const TELEMETRY_POLL_INTERVAL = 8;
 // Session snapshots are rebuilt from shared memory on demand; 2 Hz is plenty
 // for driver-grid changes and mirrors the iRacing bridge's session poll rate.
 const SESSION_POLL_INTERVAL = 500;
