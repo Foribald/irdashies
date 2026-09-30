@@ -329,3 +329,90 @@ describe('mapLmuTelemetry session clock', () => {
     expect(t.SessionTime?.value[0]).toBe(1250.5);
   });
 });
+
+describe('mapLmuTelemetry absent-value sentinels', () => {
+  /**
+   * Slot 0 as the addon really leaves a hole: every array keeps the zero it
+   * was created with, except vehLapDistPct, which is explicitly filled -1.
+   */
+  const withHole = () => {
+    const raw = fixture();
+    const hole = <T>(values: T) => values;
+    raw.vehLapDistPct = hole([
+      -1, 0.6, 0.2,
+    ]) as unknown as typeof raw.vehLapDistPct;
+    raw.vehBestLapTime = hole([
+      0, 132.8, 137.1,
+    ]) as unknown as typeof raw.vehBestLapTime;
+    raw.vehLastLapTime = hole([
+      0, 133.4, 138.9,
+    ]) as unknown as typeof raw.vehLastLapTime;
+    raw.vehTotalLaps = hole([0, 3, 1]) as unknown as typeof raw.vehTotalLaps;
+    raw.vehClass = hole([0, 0, 1]) as unknown as typeof raw.vehClass;
+    return raw;
+  };
+
+  it('reports an empty slot as absent, not as zero', () => {
+    // The addon sizes per-car arrays to max(mID)+1 and writes only real cars,
+    // so a hole keeps the zero the array was created with. formatTime renders
+    // 0 as "0:00.000" and only treats a negative as absent, which is why an
+    // empty slot used to show a lap time of zero in the standings.
+    const t = mapLmuTelemetry(withHole());
+
+    expect((t.CarIdxBestLapTime?.value as number[])[0]).toBe(-1);
+    expect((t.CarIdxLastLapTime?.value as number[])[0]).toBe(-1);
+    expect((t.CarIdxLap?.value as number[])[0]).toBe(-1);
+    expect((t.CarIdxLapCompleted?.value as number[])[0]).toBe(-1);
+    expect((t.CarIdxClass?.value as number[])[0]).toBe(-1);
+    expect((t.CarIdxTrackSurface?.value as number[])[0]).toBe(-1);
+  });
+
+  it('leaves real cars in the same frame untouched', () => {
+    const t = mapLmuTelemetry(withHole());
+
+    expect((t.CarIdxBestLapTime?.value as number[])[1]).toBe(132.8);
+    expect((t.CarIdxLastLapTime?.value as number[])[2]).toBe(138.9);
+    expect((t.CarIdxLap?.value as number[])[1]).toBe(3);
+    expect((t.CarIdxClass?.value as number[])[2]).toBe(1);
+    // Occupied cars keep a real class of 0 -- only the hole is sentinelled.
+    expect((t.CarIdxClass?.value as number[])[1]).toBe(0);
+  });
+
+  it('keeps a real zero lap count but not a zero lap time', () => {
+    // The two fields need different rules. A car on its first lap genuinely
+    // has 0 completed laps, and createStandings normalises a falsy lap count
+    // to 1 -- turning that into -1 would corrupt the lap-gap arithmetic. A
+    // lap time of 0 is never real, so it is absent whoever wrote it.
+    const raw = fixture();
+    raw.vehTotalLaps = [0, 3, 1] as unknown as typeof raw.vehTotalLaps;
+    raw.vehBestLapTime = [
+      0, 132.8, 137.1,
+    ] as unknown as typeof raw.vehBestLapTime;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect((t.CarIdxLap?.value as number[])[0]).toBe(0);
+    expect((t.CarIdxBestLapTime?.value as number[])[0]).toBe(-1);
+  });
+
+  it('reports the player as absent when there is no player car', () => {
+    const raw = fixture();
+    raw.playerHasVehicle = false;
+    raw.playerVehicleIdx = -1;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.LapBestLapTime?.value[0]).toBe(-1);
+    expect(t.LapLastLapTime?.value[0]).toBe(-1);
+    expect(t.PlayerTrackSurface?.value[0]).toBe(-1);
+  });
+
+  it('leaves the gap fields at zero, which is what iRacing uses there', () => {
+    // CarIdxF2Time and CarIdxEstTime are 0-for-absent in iRacing's own
+    // telemetry, so a sentinel here would be the bug.
+    const t = mapLmuTelemetry(withHole());
+
+    expect((t.CarIdxF2Time?.value as number[])[0]).toBe(0);
+    expect((t.CarIdxEstTime?.value as number[])[0]).toBe(50);
+  });
+});

@@ -22,6 +22,8 @@ const PHASE_TO_SESSION_STATE: Record<number, number> = {
   9: SessionState.Racing,
 };
 
+/** Matches TrackLocation.NotInWorld, which consumers test with `> -1`. */
+const TRACK_NOT_IN_WORLD = -1;
 const TRACK_IN_PIT_STALL = 1;
 const TRACK_APPROACHING_PITS = 2;
 const TRACK_ON_TRACK = 3;
@@ -37,6 +39,54 @@ const boolArr = (
 ) => ({
   value: v ? Array.from(v, get) : [],
 });
+/**
+ * Whether a per-car slot holds a real car.
+ *
+ * The addon sizes its arrays to max(mID)+1 and writes only the slots of cars
+ * present in scoring, so every gap in the id range keeps the zero a
+ * Napi::Float64Array is created with. vehLapDistPct is the one array the
+ * addon sentinel-fills with -1, which makes it the reliable discriminator.
+ */
+const isOccupied = (raw: Raw, carIdx: number) =>
+  (raw.vehLapDistPct?.[carIdx] ?? -1) >= 0;
+
+/**
+ * Lap times, with anything non-positive reported as absent.
+ *
+ * -1 is the sentinel the rest of the app reads as "no time": formatTime
+ * returns '' for a negative and renders 0 as "0:00.000", and the standings
+ * cells pass their value straight to it. Keyed on the value rather than on
+ * occupancy because 0 is never a legitimate lap time, so this also covers a
+ * zero LMU writes for a car that is really there.
+ */
+const lapTimeArr = (v: ArrayLike<number> | undefined) => ({
+  value: v ? Array.from(v, (time) => (time > 0 ? time : -1)) : [],
+});
+
+/** A lap time for a single car, under the same rule. */
+const lapTime = (v: number | undefined) =>
+  num(v !== undefined && v > 0 ? v : -1);
+
+/**
+ * Per-car values where 0 is a legitimate reading, so only an empty slot may
+ * become the sentinel.
+ *
+ * A car on its first lap genuinely has 0 completed laps, and createStandings
+ * normalises a falsy lap count to 1; turning that 0 into -1 would corrupt the
+ * lap-gap arithmetic for a real car.
+ */
+const occupiedArr = (
+  v: ArrayLike<number> | undefined,
+  raw: Raw,
+  absent: number
+) => ({
+  value: v
+    ? Array.from(v, (value, carIdx) =>
+        isOccupied(raw, carIdx) ? value : absent
+      )
+    : [],
+});
+
 const lapDistPctArr = (v: ArrayLike<number> | undefined) => ({
   value: v
     ? Array.from(v, (value) =>
@@ -103,6 +153,10 @@ function sectorIdx(rawSector: number | undefined): number {
 }
 
 function trackLocation(raw: Raw, carIdx: number): number {
+  // An empty slot is not a car sitting on the track. Without this every index
+  // up to max(mID) reported on-track, which consumers test with
+  // `> TrackLocation.NotInWorld`.
+  if (!isOccupied(raw, carIdx)) return TRACK_NOT_IN_WORLD;
   if (raw.vehInGarageStall[carIdx] || raw.vehPitState[carIdx] === 3) {
     return TRACK_IN_PIT_STALL;
   }
@@ -212,7 +266,7 @@ export function mapLmuTelemetry(
   t.PlayerTireCompound = num(0);
   t.PlayerFastRepairsUsed = num(0);
   t.PlayerTrackSurface = num(
-    playerIdx >= 0 ? trackLocation(raw, playerIdx) : TRACK_ON_TRACK
+    playerIdx >= 0 ? trackLocation(raw, playerIdx) : TRACK_NOT_IN_WORLD
   );
   t.PlayerCarPosition = num(raw.vehPlaces[playerIdx] ?? 0);
   t.PlayerCarClass = num(raw.vehClass[playerIdx] ?? 0);
@@ -221,8 +275,8 @@ export function mapLmuTelemetry(
   t.CarLeftRight = num(mapLmuCarLeftRight(raw) ?? CarLeftRight.Off);
 
   // Per-car
-  t.CarIdxLap = numArr(raw.vehTotalLaps);
-  t.CarIdxLapCompleted = numArr(raw.vehTotalLaps);
+  t.CarIdxLap = occupiedArr(raw.vehTotalLaps, raw, -1);
+  t.CarIdxLapCompleted = occupiedArr(raw.vehTotalLaps, raw, -1);
   t.CarIdxLapDistPct = lapDistPctArr(raw.vehLapDistPct);
   // The player's own slot takes the smoothed value too, so anything measuring
   // against the player sees continuous motion rather than a 5 Hz step. Other
@@ -242,11 +296,11 @@ export function mapLmuTelemetry(
   t.CarIdxOnPitRoad = boolArr(raw.vehInPits, (v) => v === 1);
   t.CarIdxPosition = numArr(raw.vehPlaces);
   t.CarIdxClassPosition = numArr(undefined);
-  t.CarIdxClass = numArr(raw.vehClass);
+  t.CarIdxClass = occupiedArr(raw.vehClass, raw, -1);
   t.CarIdxF2Time = numArr(raw.vehTimeBehindLeader);
   t.CarIdxEstTime = numArr(raw.vehTimeIntoLap);
-  t.CarIdxLastLapTime = numArr(raw.vehLastLapTime);
-  t.CarIdxBestLapTime = numArr(raw.vehBestLapTime);
+  t.CarIdxLastLapTime = lapTimeArr(raw.vehLastLapTime);
+  t.CarIdxBestLapTime = lapTimeArr(raw.vehBestLapTime);
   t.CarIdxGear = numArr(undefined);
   t.CarIdxTireCompound = numArr(undefined);
   t.CarIdxSessionFlags = numArr(carSessionFlags(raw));
@@ -271,8 +325,8 @@ export function mapLmuTelemetry(
   t.Lap = num(raw.lapNumber);
   t.LapCompleted = num(raw.vehTotalLaps[playerIdx] ?? 0);
   t.LapDistPct = num(lapDistPct);
-  t.LapBestLapTime = num(raw.vehBestLapTime[playerIdx] ?? 0);
-  t.LapLastLapTime = num(raw.vehLastLapTime[playerIdx] ?? 0);
+  t.LapBestLapTime = lapTime(raw.vehBestLapTime[playerIdx]);
+  t.LapLastLapTime = lapTime(raw.vehLastLapTime[playerIdx]);
   t.LapCurrentLapTime = num(
     Math.max(0, (raw.elapsedTime ?? 0) - (raw.lapStartET ?? 0))
   );
