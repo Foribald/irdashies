@@ -211,6 +211,18 @@ export function mapLmuTelemetry(
   t.CarIdxLap = numArr(raw.vehTotalLaps);
   t.CarIdxLapCompleted = numArr(raw.vehTotalLaps);
   t.CarIdxLapDistPct = lapDistPctArr(raw.vehLapDistPct);
+  // The player's own slot takes the smoothed value too, so anything measuring
+  // against the player sees continuous motion rather than a 5 Hz step. Other
+  // cars stay at the scoring rate: per-car speed is not exported, so there is
+  // nothing to integrate them with.
+  const carIdxLapDistPct = t.CarIdxLapDistPct.value as number[];
+  if (
+    playerIdx >= 0 &&
+    playerIdx < carIdxLapDistPct.length &&
+    estimatedLapDistPct >= 0
+  ) {
+    carIdxLapDistPct[playerIdx] = lapDistPct;
+  }
   t.CarIdxTrackSurface = {
     value: Array.from(raw.vehInPits, (_, carIdx) => trackLocation(raw, carIdx)),
   };

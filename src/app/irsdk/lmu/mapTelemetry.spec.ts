@@ -239,11 +239,10 @@ describe('mapLmuTelemetry lap-distance reconstruction', () => {
     expect(b).toBeGreaterThan(a);
   });
 
-  it('leaves CarIdxLapDistPct at the scoring rate', () => {
+  it('smooths the player slot of CarIdxLapDistPct and no other', () => {
     // The per-car array feeds the blind-spot monitor and the relative-gap
-    // processor. Smoothing only the player's slot makes gaps to other cars
-    // step backwards between scoring updates, so that is deliberately a
-    // separate change from this one.
+    // processor. Only the player can be smoothed: per-car speed is not
+    // exported, so there is nothing to integrate the others with.
     const state = createLmuLapDistanceState();
     const first = fixture();
     const second = fixture();
@@ -251,7 +250,17 @@ describe('mapLmuTelemetry lap-distance reconstruction', () => {
 
     mapLmuTelemetry(first, state);
     const t = mapLmuTelemetry(second, state);
+    const perCar = t.CarIdxLapDistPct?.value as number[];
 
+    // playerVehicleIdx is 1 in the fixture.
+    expect(perCar[1]).toBe(t.LapDistPct?.value[0]);
+    expect(perCar[1]).toBeGreaterThan(0.6);
+    expect(perCar[0]).toBe(0.4);
+    expect(perCar[2]).toBe(0.2);
+  });
+
+  it('leaves the per-car array alone when there is no integrator', () => {
+    const t = mapLmuTelemetry(fixture());
     expect(t.CarIdxLapDistPct?.value).toEqual([0.4, 0.6, 0.2]);
   });
 
