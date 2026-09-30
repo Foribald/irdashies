@@ -28,6 +28,7 @@ private:
     int GetClassId(const char *className) const;
     const LMUVehicleTelemetry *GetPlayerTelemetry() const;
     const LMUVehicleTelemetry *GetVehicleTelemetryById(int id) const;
+    LMUSnapshotState LiveState() const;
     bool CaptureSnapshot();
     bool IsLive() const;
     int VehicleCount() const;

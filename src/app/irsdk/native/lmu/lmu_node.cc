@@ -136,6 +136,14 @@ bool LmuSdkNode::IsLive() const
   return window != NULL && ::IsWindow(window);
 }
 
+LMUSnapshotState LmuSdkNode::LiveState() const
+{
+  return {
+      _mapped->generic.events.SME_UPDATE_SCORING,
+      _mapped->generic.events.SME_UPDATE_TELEMETRY,
+  };
+}
+
 bool LmuSdkNode::CaptureSnapshot()
 {
   if (_mapped == NULL)
@@ -143,12 +151,15 @@ bool LmuSdkNode::CaptureSnapshot()
 
   for (int attempt = 0; attempt < 4; ++attempt)
   {
-    const LMUSnapshotState before = {
-      _mapped->generic.events.SME_UPDATE_SCORING,
-      _mapped->generic.events.SME_UPDATE_TELEMETRY,
-      _mapped->scoring.scoringInfo.mNumVehicles,
-      _mapped->telemetry.activeVehicles,
-    };
+    // Cheap gate before the expensive part. The copy below is ~317 KB out of
+    // a mapping the sim is actively writing, and an attempt that was going to
+    // fail used to pay for it in full before anything was checked. Two
+    // counter reads cost sixteen bytes and catch a writer mid-burst first.
+    const LMUSnapshotState before = LiveState();
+    MemoryBarrier();
+    if (!IsQuietLmuWriter(before, LiveState()))
+      continue;
+
     MemoryBarrier();
     LMUObjectOut candidate;
     std::memcpy(&candidate, _mapped, sizeof(candidate));
@@ -156,15 +167,8 @@ bool LmuSdkNode::CaptureSnapshot()
     const LMUSnapshotState snapshot = {
       candidate.generic.events.SME_UPDATE_SCORING,
       candidate.generic.events.SME_UPDATE_TELEMETRY,
-      candidate.scoring.scoringInfo.mNumVehicles,
-      candidate.telemetry.activeVehicles,
     };
-    const LMUSnapshotState after = {
-      _mapped->generic.events.SME_UPDATE_SCORING,
-      _mapped->generic.events.SME_UPDATE_TELEMETRY,
-      _mapped->scoring.scoringInfo.mNumVehicles,
-      _mapped->telemetry.activeVehicles,
-    };
+    const LMUSnapshotState after = LiveState();
 
     if (!IsCoherentLmuSnapshot(before, snapshot, after))
       continue;

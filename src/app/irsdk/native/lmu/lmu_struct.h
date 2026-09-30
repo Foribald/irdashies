@@ -337,11 +337,20 @@ struct LMUObjectOut {
 
 #define LMU_MAX_VEHICLES 104
 
+/**
+ * The writer's update counters, used to tell a torn copy from a clean one.
+ *
+ * Vehicle counts are deliberately not part of this. Scoring publishes
+ * mNumVehicles at 5 Hz and telemetry publishes activeVehicles at 100 Hz, so
+ * the two legitimately disagree for up to one scoring interval whenever a car
+ * joins or leaves. Requiring them to match never detected a torn read: it
+ * rejected every frame for that whole window, and each rejection had already
+ * paid for a full snapshot copy. Consumers clamp their own per-car loops, so
+ * a transient mismatch is safe to hand out.
+ */
 struct LMUSnapshotState {
   uint32_t scoringUpdate;
   uint32_t telemetryUpdate;
-  int32_t scoringVehicles;
-  uint8_t telemetryVehicles;
 };
 
 constexpr bool IsCoherentLmuSnapshot(
@@ -352,13 +361,27 @@ constexpr bool IsCoherentLmuSnapshot(
   return before.scoringUpdate == snapshot.scoringUpdate &&
       snapshot.scoringUpdate == after.scoringUpdate &&
       before.telemetryUpdate == snapshot.telemetryUpdate &&
-      snapshot.telemetryUpdate == after.telemetryUpdate &&
-      snapshot.scoringVehicles == snapshot.telemetryVehicles;
+      snapshot.telemetryUpdate == after.telemetryUpdate;
 }
 
-static_assert(IsCoherentLmuSnapshot({1, 2, 3, 3}, {1, 2, 3, 3}, {1, 2, 3, 3}));
-static_assert(!IsCoherentLmuSnapshot({1, 2, 3, 3}, {2, 2, 3, 3}, {2, 2, 3, 3}));
-static_assert(!IsCoherentLmuSnapshot({1, 2, 3, 3}, {1, 2, 3, 2}, {1, 2, 3, 3}));
+/**
+ * Whether the writer stood still between two counter reads taken back to
+ * back. Checked before the copy, so an attempt doomed by a writer mid-burst
+ * costs a few bytes instead of the whole snapshot.
+ */
+constexpr bool IsQuietLmuWriter(
+    const LMUSnapshotState &first,
+    const LMUSnapshotState &second)
+{
+  return first.scoringUpdate == second.scoringUpdate &&
+      first.telemetryUpdate == second.telemetryUpdate;
+}
+
+static_assert(IsCoherentLmuSnapshot({1, 2}, {1, 2}, {1, 2}));
+static_assert(!IsCoherentLmuSnapshot({1, 2}, {2, 2}, {2, 2}));
+static_assert(!IsCoherentLmuSnapshot({1, 2}, {1, 3}, {1, 3}));
+static_assert(IsQuietLmuWriter({1, 2}, {1, 2}));
+static_assert(!IsQuietLmuWriter({1, 2}, {1, 3}));
 
 static_assert(sizeof(LMUVect3) == 24, "LMUVect3 size mismatch");
 static_assert(sizeof(LMUWheel) == 260, "LMUWheel size mismatch");
