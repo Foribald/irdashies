@@ -2,123 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CarLeftRight } from '@irdashies/types';
 import type { LmuRawTelemetry } from '../native/lmu';
 import { mapLmuSectorTimes, mapLmuTelemetry } from './mapTelemetry';
-
-function fixture(): LmuRawTelemetry {
-  return {
-    running: true,
-    gameVersion: 1902,
-    trackName: 'Spa Francorchamps',
-    playerName: 'Alonso',
-    serverName: 'Server',
-    session: 1,
-    currentET: 1250.5,
-    endET: 3600,
-    maxLaps: 12,
-    lapDist: 7004,
-    numVehicles: 3,
-    gamePhase: 4,
-    yellowFlagState: 0,
-    sectorFlags: new Uint8Array([0, 0, 0]),
-    inRealtime: true,
-    gameMode: 3,
-    isFixedSetup: false,
-    maxPlayers: 60,
-    sessionTimeRemaining: 2349.5,
-    timeOfDay: 0.45,
-    trackGripLevel: 1,
-    cloudCoverage: 20,
-    raining: 0,
-    darkCloud: 0,
-    ambientTemp: 23.5,
-    trackTemp: 31.2,
-    minPathWetness: 0,
-    maxPathWetness: 0,
-    avgPathWetness: 0.05,
-    wind: [2, 0, -3],
-    playerVehicleIdx: 1,
-    playerHasVehicle: true,
-    activeVehicles: 2,
-    gear: 5,
-    engineRPM: 8200,
-    engineWaterTemp: 95,
-    engineOilTemp: 110,
-    clutchRPM: 8200,
-    unfilteredThrottle: 0.8,
-    unfilteredBrake: 0,
-    unfilteredSteering: -0.3,
-    unfilteredClutch: 0,
-    filteredThrottle: 0.79,
-    filteredBrake: 0,
-    filteredSteering: -0.29,
-    filteredClutch: 0,
-    steeringShaftTorque: 1.2,
-    fuel: 42,
-    fuelCapacity: 110,
-    engineMaxRPM: 9000,
-    rearBrakeBias: 0.55,
-    lapNumber: 3,
-    elapsedTime: 250.4,
-    lapStartET: 200,
-    currentSector: 1,
-    lapInvalidated: false,
-    speedLimiterActive: false,
-    speedLimiter: 0,
-    absActive: 1,
-    tcActive: 0,
-    ignitionStarter: 0,
-    maxGears: 6,
-    visualSteeringWheelRange: 480,
-    deltaBest: 0.2,
-    batteryChargeFraction: 1,
-    turboBoostPressure: 0,
-    frontTireCompoundName: 'Dry',
-    vehicleName: 'Ferrari 296 GT3',
-    speed: 51.234,
-    localVel: [50, 0, 11],
-    localAccel: [9.80665, 0, -19.6133],
-    pos: [0, 0, 0],
-    tyreTemperature: new Float64Array([80, 81, 82, 83]),
-    tyrePressure: new Float64Array([180, 181, 182, 183]),
-    tyreWear: new Float64Array([0.9, 0.8, 0.7, 0.6]),
-    brakePressure: new Float64Array([0.4, 0.5, 0.3, 0.35]),
-    suspensionDeflection: new Float64Array([0.04, 0.05, 0.06, 0.07]),
-    vehIds: [0, 1, 1],
-    vehIsPlayer: [0, 1, 0],
-    vehPlaces: [2, 1, 3],
-    vehLapDistPct: [0.4, 0.6, 0.2],
-    vehTotalLaps: [2, 3, 1],
-    vehBestLapTime: [134.5, 132.8, 137.1],
-    vehLastLapTime: [135.6, 133.4, 138.9],
-    vehInPits: [0, 0, 1],
-    vehInGarageStall: [0, 0, 0],
-    vehPitState: [0, 0, 3],
-    vehClass: [0, 0, 1],
-    vehTimeIntoLap: [50, 60, 20],
-    vehEstimatedLapTime: [134, 132, 136],
-    vehTimeBehindNext: [1.2, 3.4, 5.6],
-    vehTimeBehindLeader: [0, 1.2, 10.5],
-    vehLapsBehindNext: [0, 0, 1],
-    vehLapsBehindLeader: [0, 0, 1],
-    vehQualification: [0, 132.1, 0],
-    vehFinishStatus: [0, 0, 0],
-    vehIndividualPhase: [10, 9, 8],
-    vehLapStartET: [1000, 1100, 900],
-    vehSector: [1, 2, 0],
-    vehFlag: [0, 0, 6],
-    vehUnderYellow: [0, 0, 0],
-    vehBestSector1: [32.5, 32.1, 40.1],
-    vehBestSector2: [73.7, 72.9, 91.6],
-    vehLastSector1: [33.1, 32.4, 41],
-    vehLastSector2: [75.1, 73.4, 93],
-    vehCurSector1: [-1, 32.8, -1],
-    vehCurSector2: [-1, 74.2, -1],
-    vehTelemetryAvailable: [1, 1, 1],
-    vehPosX: [3, 0, 20],
-    vehPosZ: [0, 0, 20],
-    vehOriX: [0, 0, 0],
-    vehOriZ: [1, 1, 1],
-  } as unknown as LmuRawTelemetry;
-}
+import { fixture } from './rawFixture';
+import { createLmuLapDistanceState } from './lapDistance';
 
 describe('mapLmuTelemetry', () => {
   it('maps session scalars', () => {
@@ -335,5 +220,75 @@ describe('mapLmuTelemetry', () => {
     expect(t.LmuLastSectorTimes?.value[0]).toBeCloseTo(32.4);
     expect(t.LmuLastSectorTimes?.value[1]).toBeCloseTo(41);
     expect(t.LmuLastSectorTimes?.value[2]).toBeCloseTo(60);
+  });
+});
+
+describe('mapLmuTelemetry lap-distance reconstruction', () => {
+  it('advances the fraction between scoring updates', () => {
+    // LMU only publishes lap distance at 5 Hz, so two polls 15 ms apart carry
+    // a byte-identical scoring fraction. Without the integrator LapTrace's
+    // sample buffer drops the second one.
+    const state = createLmuLapDistanceState();
+    const first = fixture();
+    const second = fixture();
+    second.elapsedTime = (first.elapsedTime ?? 0) + 0.015;
+
+    const a = mapLmuTelemetry(first, state).LapDistPct?.value[0] as number;
+    const b = mapLmuTelemetry(second, state).LapDistPct?.value[0] as number;
+
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it('leaves CarIdxLapDistPct at the scoring rate', () => {
+    // The per-car array feeds the blind-spot monitor and the relative-gap
+    // processor. Smoothing only the player's slot makes gaps to other cars
+    // step backwards between scoring updates, so that is deliberately a
+    // separate change from this one.
+    const state = createLmuLapDistanceState();
+    const first = fixture();
+    const second = fixture();
+    second.elapsedTime = (first.elapsedTime ?? 0) + 0.015;
+
+    mapLmuTelemetry(first, state);
+    const t = mapLmuTelemetry(second, state);
+
+    expect(t.CarIdxLapDistPct?.value).toEqual([0.4, 0.6, 0.2]);
+  });
+
+  it('is byte-identical to the raw scoring value without a state object', () => {
+    const withoutState = mapLmuTelemetry(fixture());
+    expect(withoutState.LapDistPct?.value[0]).toBe(0.6);
+  });
+
+  it('leaves the no-player path untouched even when given a state object', () => {
+    // Spectating or in the garage there is no elapsedTime either, so feeding
+    // the integrator would anchor it on a fabricated (pct 0, t -1) pair.
+    const state = createLmuLapDistanceState();
+    const raw = fixture();
+    raw.playerHasVehicle = false;
+    raw.playerVehicleIdx = -1;
+
+    const bare = fixture();
+    bare.playerHasVehicle = false;
+    bare.playerVehicleIdx = -1;
+
+    expect(mapLmuTelemetry(raw, state).LapDistPct?.value[0]).toBe(
+      mapLmuTelemetry(bare).LapDistPct?.value[0]
+    );
+  });
+
+  it('never publishes a backward step within a lap', () => {
+    // A reversal reaches LapTrace as a dirty lap, which is then never promoted
+    // to a reference -- silently. See lapDistance.spec.ts for the unit-level
+    // property; this is the same invariant at the mapper boundary.
+    const state = createLmuLapDistanceState();
+    let previous = -Infinity;
+    for (let i = 0; i < 200; i += 1) {
+      const raw = fixture();
+      raw.elapsedTime = 250.4 + i * 0.008;
+      const value = mapLmuTelemetry(raw, state).LapDistPct?.value[0] as number;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
   });
 });

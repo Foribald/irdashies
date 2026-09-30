@@ -119,6 +119,48 @@ describe('LMU track map', () => {
     expect(map?.active.trackPathPoints).toHaveLength(512);
   });
 
+  it('records from the smoothed fraction when scoring has not moved', () => {
+    // LMU publishes lap distance at 5 Hz, so across a 64 Hz poll the scoring
+    // fraction is repeatedly identical -- and sample() drops any point whose
+    // distance has not advanced. Pinning vehLapDistPct reproduces that: the
+    // recorder collects a single point, far short of the twenty it needs.
+    const stalled = new LmuTrackMapRecorder();
+    for (let index = 0; index <= 100; index++) {
+      stalled.update(frame(index / 100, { vehLapDistPct: [0] }));
+    }
+    expect(
+      stalled.update(frame(0, { vehLapDistPct: [0], lapStartET: 200 }))
+    ).toBeNull();
+
+    // The same frames, with the reconstructed fraction supplied, promote a map.
+    const smoothed = new LmuTrackMapRecorder();
+    for (let index = 0; index <= 100; index++) {
+      smoothed.update(frame(index / 100, { vehLapDistPct: [0] }), index / 100);
+    }
+    const map = smoothed.update(
+      frame(0, { vehLapDistPct: [0], lapStartET: 200, pos: [0, 12, 0] }),
+      0
+    );
+
+    expect(map?.active.trackPathPoints).toHaveLength(512);
+  });
+
+  it('ignores a smoothed fraction that is negative or not finite', () => {
+    // The bridge passes telemetry.LapDistPct, which is 0 with no player car
+    // and could be NaN from a garbage frame. Either must fall back to scoring
+    // rather than pinning progress.
+    const recorder = new LmuTrackMapRecorder();
+    for (let index = 0; index <= 100; index++) {
+      expect(recorder.update(frame(index / 100), NaN)).toBeNull();
+    }
+    const map = recorder.update(
+      frame(0, { lapStartET: 200, pos: [0, 12, 0] }),
+      -1
+    );
+
+    expect(map?.active.trackPathPoints).toHaveLength(512);
+  });
+
   it('accepts a timed lap even when LMU marks it invalidated', () => {
     const recorder = new LmuTrackMapRecorder();
     for (let index = 0; index <= 100; index++) {

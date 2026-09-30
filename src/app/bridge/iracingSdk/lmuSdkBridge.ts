@@ -23,6 +23,10 @@ import {
   mapLmuTelemetry,
 } from '../../irsdk/lmu/mapTelemetry';
 import {
+  createLmuLapDistanceState,
+  resetLmuLapDistanceState,
+} from '../../irsdk/lmu/lapDistance';
+import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
@@ -105,6 +109,11 @@ export async function publishLmuSDKEvents(
   let activeTrackName = '';
   let trackMap: LmuTrackMap | null = null;
   let lastBlindSpotDataIssue: string | null | undefined;
+  // Lifts the player's lap fraction from LMU's 5 Hz scoring block to the poll
+  // rate. Held across frames, and reset only at the two real discontinuities
+  // below -- never on the grace-hold path, where re-anchoring mid-lap would
+  // drop the estimate back a few centimetres and silently cost a sample.
+  const lapDistanceState = createLmuLapDistanceState();
   let pitSpeedLimitMs: number | undefined;
   let lastPitCalibrationSpeed: number | undefined;
 
@@ -186,6 +195,7 @@ export async function publishLmuSDKEvents(
           lifecycle?._onDisconnect();
           wasRunning = false;
           lastSessionSignature = null;
+          resetLmuLapDistanceState(lapDistanceState);
         }
         unavailableSince = null;
         await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
@@ -225,6 +235,7 @@ export async function publishLmuSDKEvents(
           }
         }
         mapRecorder.reset(activeTrackName);
+        resetLmuLapDistanceState(lapDistanceState);
         lastSessionSignature = null;
         logger.info(
           `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
@@ -232,21 +243,6 @@ export async function publishLmuSDKEvents(
         logger.warn(
           '[lmuSdkBridge] LMU does not expose a pit speed limit; the limit will remain hidden until calibrated from live limiter-capped speed'
         );
-      }
-      if (!trackMap) {
-        const recordedMap = mapRecorder.update(raw);
-        if (recordedMap) {
-          try {
-            mapStorage.save(activeTrackName, recordedMap);
-            trackMap = recordedMap;
-            lastSessionSignature = null;
-            logger.info(
-              `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
-            );
-          } catch (error) {
-            logger.error('[lmuSdkBridge] Failed to save track map', error);
-          }
-        }
       }
 
       if (!wasRunning) {
@@ -320,9 +316,37 @@ export async function publishLmuSDKEvents(
       }
 
       perfMetrics.markStart('lifecycleTelemetry');
-      const telemetry = mapLmuTelemetry(raw);
+      const telemetry = mapLmuTelemetry(raw, lapDistanceState);
       lifecycle?._onTelemetry(telemetry);
       perfMetrics.markEnd('lifecycleTelemetry');
+
+      // Runs below the frame build because it consumes it: the reconstructed
+      // fraction moves at the poll rate, where raw scoring only steps at 5 Hz
+      // and left the recorder sampling about one point in thirteen. Kept out
+      // of the span above so a map save cannot inflate that metric.
+      //
+      // A map first recorded on this frame is therefore published on the next
+      // poll carrying a session snapshot -- up to SESSION_POLL_INTERVAL later
+      // -- rather than in this one. A map appears once per track, so the
+      // delay is invisible; the existing signature reset is what forces it.
+      if (!trackMap) {
+        const recordedMap = mapRecorder.update(
+          raw,
+          telemetry.LapDistPct?.value[0] as number | undefined
+        );
+        if (recordedMap) {
+          try {
+            mapStorage.save(activeTrackName, recordedMap);
+            trackMap = recordedMap;
+            lastSessionSignature = null;
+            logger.info(
+              `[lmuSdkBridge] Recorded track map for ${activeTrackName}`
+            );
+          } catch (error) {
+            logger.error('[lmuSdkBridge] Failed to save track map', error);
+          }
+        }
+      }
       processorHost?.onFrame(telemetry);
 
       if (

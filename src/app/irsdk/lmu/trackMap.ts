@@ -243,7 +243,15 @@ export class LmuTrackMapRecorder {
   private recording = false;
   private points: RecordedPoint[] = [];
 
-  update(frame: LmuMapFrame): LmuTrackMap | null {
+  /**
+   * @param smoothedProgress The player's lap fraction reconstructed at the
+   *   poll rate. Preferred over the raw scoring fraction, which only moves at
+   *   5 Hz and left the recorder sampling roughly one point in thirteen.
+   *   Rejected when negative as well as non-finite: the caller passes
+   *   `telemetry.LapDistPct`, which is 0 with no player car -- finite, and
+   *   would otherwise beat the fallback and pin progress at 0.
+   */
+  update(frame: LmuMapFrame, smoothedProgress?: number): LmuTrackMap | null {
     if (frame.trackName !== this.trackName) this.reset(frame.trackName);
     if (
       !frame.playerHasVehicle ||
@@ -255,7 +263,12 @@ export class LmuTrackMapRecorder {
       return null;
     }
 
-    const progress = frame.vehLapDistPct[frame.playerVehicleIdx];
+    const progress =
+      smoothedProgress !== undefined &&
+      finite(smoothedProgress) &&
+      smoothedProgress >= 0
+        ? smoothedProgress
+        : frame.vehLapDistPct[frame.playerVehicleIdx];
     if (!finite(progress)) return null;
 
     if (this.lapStartET === null) {

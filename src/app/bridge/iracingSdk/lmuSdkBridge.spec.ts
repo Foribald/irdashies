@@ -16,6 +16,13 @@ const sdkState = vi.hoisted(() => ({
   readThrows: false,
 }));
 
+/** Shared so the specs can observe how the bridge drives them. */
+const recorderUpdate = vi.hoisted(() => vi.fn(() => null));
+const lapDistanceSpies = vi.hoisted(() => ({
+  create: vi.fn(() => ({ marker: 'lap-distance-state' })),
+  reset: vi.fn(),
+}));
+
 const rawFrame = () => {
   if (sdkState.readThrows) throw new Error('shared memory read failed');
   return {
@@ -87,7 +94,7 @@ vi.mock('../../irsdk/lmu/trackMap', () => ({
   tinyPedalTrackMapDirectories: () => [],
   LmuTrackMapRecorder: class {
     reset = vi.fn();
-    update = vi.fn(() => null);
+    update = recorderUpdate;
   },
   LmuTrackMapStorage: class {
     save = vi.fn();
@@ -99,6 +106,13 @@ vi.mock('../../irsdk/lmu/trackMap', () => ({
 vi.mock('../../irsdk/lmu/mapTelemetry', () => ({
   mapLmuTelemetry: () => ({}),
   mapLmuCarLeftRight: () => 0,
+}));
+
+// The estimator has its own specs; here only the bridge's use of it matters --
+// that it is threaded into the mapper and reset at the right moments.
+vi.mock('../../irsdk/lmu/lapDistance', () => ({
+  createLmuLapDistanceState: lapDistanceSpies.create,
+  resetLmuLapDistanceState: lapDistanceSpies.reset,
 }));
 
 vi.mock('../../irsdk/lmu/mapSession', () => ({
@@ -197,6 +211,76 @@ describe('publishLmuSDKEvents when the telemetry loop fails', () => {
     // Only the seeded false from construction: publishRunningState must not
     // announce a change that did not happen.
     expect(runningStatesPublished(overlayManager)).toEqual([false]);
+    bridge.stop();
+  });
+});
+
+describe('publishLmuSDKEvents lap-distance wiring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sdkState.running = true;
+    sdkState.readThrows = false;
+    recorderUpdate.mockReturnValue(null);
+  });
+
+  it('feeds the track-map recorder the reconstructed fraction', async () => {
+    // The recorder samples on lap distance, and raw scoring only steps at
+    // 5 Hz, so without the smoothed value it collects about one point in
+    // thirteen and never reaches the minimum a map needs. It therefore has to
+    // run below the frame build, consuming it.
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    await vi.waitFor(() => expect(recorderUpdate).toHaveBeenCalled());
+    expect(recorderUpdate.mock.calls[0]).toHaveLength(2);
+
+    bridge.stop();
+  });
+
+  it('threads the estimator state into the mapper', async () => {
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    // One integrator for the life of the bridge, not one per frame -- it is
+    // what carries the anchor between polls.
+    await vi.waitFor(() => expect(recorderUpdate).toHaveBeenCalled());
+    expect(lapDistanceSpies.create).toHaveBeenCalledTimes(1);
+
+    bridge.stop();
+  });
+
+  it('does not re-anchor the estimator while holding through a dropout', async () => {
+    // The grace path exists to survive a transient dropout. Resetting there
+    // would drop the estimate back to the frozen scoring value on every blip;
+    // under MAX_BACKWARD_M that reads as a dropped sample rather than a
+    // reversal, so it would cost resolution silently.
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    const observed: boolean[] = [];
+    bridge.onRunningState((value) => observed.push(value));
+    await vi.waitFor(() => expect(observed).toContain(true));
+    // One reset has already happened: the first frame is a track change, from
+    // the empty starting name, which is a genuine discontinuity.
+    const resetsAfterStartup = lapDistanceSpies.reset.mock.calls.length;
+
+    // Frames stop arriving, but well inside LMU_DISCONNECT_GRACE_MS.
+    sdkState.running = false;
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(overlayManager.publishMessage)
+          .mock.calls.some(([channel]) => channel === 'runningState')
+      ).toBe(true)
+    );
+
+    // Still held: no disconnect was confirmed, so no re-anchor.
+    expect(observed).not.toContain(false);
+    expect(lapDistanceSpies.reset.mock.calls.length).toBe(resetsAfterStartup);
+
     bridge.stop();
   });
 });

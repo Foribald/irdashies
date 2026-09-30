@@ -5,6 +5,7 @@ import {
   type Telemetry,
 } from '@irdashies/types';
 import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
+import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
 
 type Raw = import('../native/lmu').LmuRawTelemetry;
 
@@ -114,7 +115,15 @@ function trackLocation(raw: Raw, carIdx: number): number {
  * Values without an LMU source default to 0/[]/false so downstream stores and
  * processors behave the same as when an iRacing telemetry var is absent.
  */
-export function mapLmuTelemetry(raw: Raw): Telemetry {
+export function mapLmuTelemetry(
+  raw: Raw,
+  /**
+   * Lap-distance integrator state, owned by the caller so it survives between
+   * frames. Omitted -- as every spec does -- the fraction is the raw 5 Hz
+   * scoring value, exactly as before.
+   */
+  lapDistanceState?: LmuLapDistanceState
+): Telemetry {
   // Boundary note: a handful of generated Telemetry keys (e.g. SessionTime) are
   // typed with an `undefined[]` value shape although the iRacing native layer
   // emits numbers there at runtime. Building into a plain record and casting is
@@ -125,10 +134,31 @@ export function mapLmuTelemetry(raw: Raw): Telemetry {
     raw.playerHasVehicle && raw.playerVehicleIdx >= 0
       ? raw.playerVehicleIdx
       : -1;
-  const lapDistPct = Math.min(
-    1,
-    Math.max(0, raw.vehLapDistPct[playerIdx] ?? 0)
-  );
+  const scoringLapDistPct = raw.vehLapDistPct[playerIdx] ?? 0;
+  // LMU publishes lap distance only in the 5 Hz scoring block, so between
+  // scoring updates the position is advanced by speed x elapsed and
+  // resynchronised on every update. Without it the fraction is byte-identical
+  // between updates -- ~14 m apart at racing speed -- and LapTrace's sample
+  // buffer, which drops anything that has not advanced, stored about five
+  // samples a second.
+  //
+  // playerIdx < 0 is spectating or the garage, where elapsedTime is absent
+  // too; anchoring the integrator on that fabricated pair would be worse than
+  // leaving this path exactly as it was.
+  const estimatedLapDistPct =
+    lapDistanceState && playerIdx >= 0
+      ? estimateLmuLapDistPct(lapDistanceState, {
+          scoringPct: scoringLapDistPct,
+          elapsedTime: raw.elapsedTime ?? -1,
+          lapNumber: raw.lapNumber ?? -1,
+          speedMs: raw.speed ?? 0,
+          trackLengthM: raw.lapDist ?? 0,
+        })
+      : scoringLapDistPct;
+  // The estimator passes the negative "no car here" sentinel straight through;
+  // clamping here keeps the published value inside the [0, 1] contract this
+  // mapper has always had.
+  const lapDistPct = Math.min(1, Math.max(0, estimatedLapDistPct));
   const steeringMaxRad = ((raw.visualSteeringWheelRange ?? 0) * Math.PI) / 360;
   const relativePositions = deriveLmuRelativePositions(raw);
 
