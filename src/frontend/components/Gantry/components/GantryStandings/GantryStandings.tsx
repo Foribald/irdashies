@@ -161,8 +161,8 @@ const formatInterval = (
 
 export const GantryStandings = memo(({ followedCarIdx }: Props) => {
   useLapTimesStoreUpdater(true);
-  // Resolved once for the whole widget: useActiveSimulator opens an IPC
-  // subscription, and the rows below render one per driver.
+  // Resolved here and passed down, so the rows stay driven by props rather
+  // than reaching into context themselves.
   const simulator = useActiveSimulator();
   const showRatings = simulatorHasDriverRatings(simulator);
   const nameFormat = useGantrySettings()?.driverNameFormat ?? 'surname';

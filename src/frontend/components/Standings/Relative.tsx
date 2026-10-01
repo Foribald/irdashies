@@ -36,8 +36,8 @@ const EMPTY_HIDDEN_COLUMNS: ReadonlySet<string> = new Set<string>();
 export const Relative = () => {
   const settings = useRelativeSettings();
   const generalSettings = useGeneralSettings();
-  // Resolved once for the whole widget: useActiveSimulator opens an IPC
-  // subscription, and the rows below render one per driver.
+  // Resolved here and passed down, so the rows stay driven by props rather
+  // than reaching into context themselves.
   const simulator = useActiveSimulator();
   const hiddenColumns = useMemo<ReadonlySet<string>>(
     () =>

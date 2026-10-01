@@ -177,8 +177,9 @@ export const Standings = () => {
   // Check if this is a team racing session
   const isTeamRacing = useWeekendInfoTeamRacing();
 
-  // Resolved once for the whole widget: useActiveSimulator opens an IPC
-  // subscription, and the rows below render one per driver.
+  // Resolved here so the header and the rows below filter from one set:
+  // they build their column lists independently, and DriverClassHeader sums
+  // colSpan across the header list.
   const simulator = useActiveSimulator();
   const hiddenColumns = useMemo<ReadonlySet<string>>(
     () =>

@@ -63,9 +63,11 @@ interface DriverRowInfoProps {
   isMultiClass: boolean;
   displayOrder?: string[];
   /**
-   * Columns the running simulator has no data for, resolved once by the
-   * parent widget. Resolved there rather than here because the hook behind it
-   * opens an IPC subscription, and this row renders once per driver.
+   * Columns the running simulator has no data for, resolved by the parent.
+   *
+   * Passed in rather than read from context here so this row stays driven by
+   * its props, and so the header -- which builds its own column list -- is
+   * guaranteed to be filtering from the very same set.
    */
   hiddenColumns?: ReadonlySet<string>;
   config?: RelativeWidgetSettings['config'] | StandingsWidgetSettings['config'];
