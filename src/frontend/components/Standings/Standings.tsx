@@ -24,11 +24,13 @@ import {
   usePitStopDuration,
   usePitLaneStore,
   useFirstObservedLap,
+  useActiveSimulator,
 } from '@irdashies/context';
+import { RATING_COLUMN_IDS, simulatorHasDriverRatings } from '@irdashies/types';
 import { useIsSingleMake } from './hooks/useIsSingleMake';
 import { computeStintLap } from './components/DriverInfoRow/cells/lapCountUtils';
 
-const COLUMN_LABELS: Record<string, string> = {
+export const COLUMN_LABELS: Record<string, string> = {
   position: '',
   carNumber: '',
   driverTag: 'TAG',
@@ -54,6 +56,9 @@ const COLUMN_LABELS: Record<string, string> = {
 
 const COLUMN_ORDER = Object.keys(COLUMN_LABELS);
 
+/** Stable identity, so the iRacing path never invalidates dependent memos. */
+const EMPTY_HIDDEN_COLUMNS: ReadonlySet<string> = new Set<string>();
+
 export interface OrderedColumn {
   id: string;
   label: string;
@@ -64,12 +69,13 @@ export interface OrderedColumn {
 // Ordered list of every enabled data column, matching the exact column
 // structure (id order + colSpan) that DriverInfoRow renders as <td>s, so
 // a header row built from this list lines up with the data cells below.
-const getOrderedColumns = (
+export const getOrderedColumns = (
   config: NonNullable<ReturnType<typeof useStandingsSettings>>,
   hasAnyDriverTag: boolean,
   hasAnyCountryFlag: boolean,
   isTeamRacing: boolean,
-  hideCarManufacturer: boolean
+  hideCarManufacturer: boolean,
+  hiddenColumns: ReadonlySet<string>
 ): OrderedColumn[] => {
   const isEnabled = (value: unknown): boolean =>
     typeof value === 'object' &&
@@ -78,6 +84,9 @@ const getOrderedColumns = (
     value.enabled === true;
   const enabledColumns = new Set(
     COLUMN_ORDER.filter((id) => {
+      // Dropped before anything else: the row builder filters the same ids
+      // from the same set, so the header stays aligned with the cells.
+      if (hiddenColumns.has(id)) return false;
       const column = config?.[id as keyof typeof config];
       if (id === 'driverTag') return isEnabled(column) && hasAnyDriverTag;
       if (id === 'countryFlags') {
@@ -168,6 +177,17 @@ export const Standings = () => {
   // Check if this is a team racing session
   const isTeamRacing = useWeekendInfoTeamRacing();
 
+  // Resolved once for the whole widget: useActiveSimulator opens an IPC
+  // subscription, and the rows below render one per driver.
+  const simulator = useActiveSimulator();
+  const hiddenColumns = useMemo<ReadonlySet<string>>(
+    () =>
+      simulatorHasDriverRatings(simulator)
+        ? EMPTY_HIDDEN_COLUMNS
+        : new Set<string>(RATING_COLUMN_IDS),
+    [simulator]
+  );
+
   const orderedColumns = useMemo(
     () =>
       settings && settings.stylingOptions?.columnHeaders?.enabled
@@ -176,10 +196,18 @@ export const Standings = () => {
             hasAnyTag,
             !!hasAnyCountryFlag,
             !!isTeamRacing,
-            hideCarManufacturer
+            hideCarManufacturer,
+            hiddenColumns
           )
         : undefined,
-    [settings, hasAnyTag, hasAnyCountryFlag, isTeamRacing, hideCarManufacturer]
+    [
+      settings,
+      hasAnyTag,
+      hasAnyCountryFlag,
+      isTeamRacing,
+      hideCarManufacturer,
+      hiddenColumns,
+    ]
   );
 
   // Determine table border spacing based on compact mode
@@ -385,6 +413,7 @@ export const Standings = () => {
                               : undefined
                           }
                           displayOrder={settings?.displayOrder}
+                          hiddenColumns={hiddenColumns}
                           currentSessionType={result.currentSessionType}
                           config={settings}
                           highlightColor={highlightColor}
