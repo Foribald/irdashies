@@ -332,7 +332,15 @@ export function mapLmuSession(
           ? raw.engineMaxRPM
           : DEFAULT_MAX_RPM,
       DriverCarEngCylinderCount: 0,
+      // Placeholder, not a measurement. LMU's shared memory reports no fuel
+      // density, and nothing in the app reads this today -- but 0 kg/L is
+      // physically false, so anything that later converts kg to litres with
+      // it would silently produce zero or divide by it. Give it a real value
+      // only once a source for one exists.
       DriverCarFuelKgPerLtr: 0,
+      // 0 when LMU does not report a capacity. The fuel calculator rejects a
+      // non-positive tank size and falls back to estimating one, so this
+      // degrades rather than lying -- see calculateRealTankCapacity.
       DriverCarFuelMaxLtr: raw.fuelCapacity ?? 0,
       DriverCarMaxFuelPct: 1,
       DriverCarGearNumForward: raw.maxGears ?? 6,

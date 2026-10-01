@@ -41,6 +41,13 @@ export interface LmuRawVehicle {
   inGarageStall: boolean;
   pitLapDist: number;
   steamId: number;
+  /**
+   * Raw mFuelFraction, straight off a uint8_t, so always a whole number.
+   *
+   * The scale is unverified -- the name suggests 0..1, which a byte cannot
+   * hold, so it is far more likely a percentage. Nothing reads it yet.
+   * Confirm against a live session before treating it as either.
+   */
   fuelFraction: number;
   pos: LmuVec;
   localVel: LmuVec;

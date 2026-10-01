@@ -405,6 +405,16 @@ export function mapLmuTelemetry(
   t.WaterTemp = num(raw.engineWaterTemp);
   t.OilTemp = num(raw.engineOilTemp);
   t.FuelLevel = num(raw.fuel);
+  // Derived, because LMU publishes litres and a capacity on the player's
+  // 100 Hz telemetry but no fraction there -- mFuelFraction is per-car on the
+  // 5 Hz scoring block, and its scale is unverified.
+  //
+  // 0 for "capacity unknown" cannot be improved from here: the fuel
+  // processor's reader coerces a missing value to 0 on the way out, and
+  // FuelProjectionSnapshot types the field as a required number, so there is
+  // no way to express absence across that boundary. It is harmless because
+  // calculateRealTankCapacity only trusts a fraction between 0.01 and 0.99
+  // and otherwise estimates the tank, which is what absence would do anyway.
   t.FuelLevelPct = num(
     raw.fuelCapacity && raw.fuel !== undefined ? raw.fuel / raw.fuelCapacity : 0
   );

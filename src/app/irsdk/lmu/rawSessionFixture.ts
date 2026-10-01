@@ -67,7 +67,7 @@ export function fixture(): LmuRawSession {
         inGarageStall: 0,
         pitLapDist: 0,
         steamId: 111,
-        fuelFraction: 0.5,
+        fuelFraction: 50,
       },
       {
         id: 1,
@@ -106,7 +106,7 @@ export function fixture(): LmuRawSession {
         inGarageStall: 0,
         pitLapDist: 0,
         steamId: 222,
-        fuelFraction: 0.4,
+        fuelFraction: 40,
       },
       {
         id: 3,
@@ -145,7 +145,7 @@ export function fixture(): LmuRawSession {
         inGarageStall: 0,
         pitLapDist: 0,
         steamId: 333,
-        fuelFraction: 0.7,
+        fuelFraction: 70,
       },
     ],
   } as unknown as LmuRawSession;

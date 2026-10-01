@@ -416,3 +416,36 @@ describe('mapLmuTelemetry absent-value sentinels', () => {
     expect((t.CarIdxEstTime?.value as number[])[0]).toBe(50);
   });
 });
+
+describe('mapLmuTelemetry fuel', () => {
+  it('derives the fraction from litres and capacity', () => {
+    const t = mapLmuTelemetry(fixture());
+    expect(t.FuelLevel?.value[0]).toBe(42);
+    expect(t.FuelLevelPct?.value[0]).toBeCloseTo(42 / 110);
+  });
+
+  it('reports zero rather than a wrong fraction when capacity is unknown', () => {
+    // Nothing better is expressible here: the fuel processor coerces a
+    // missing value to 0 on its way out and FuelProjectionSnapshot requires
+    // a number, so absence cannot cross that boundary. The fuel calculator
+    // only trusts a fraction between 0.01 and 0.99, so a 0 makes it estimate
+    // the tank -- which is exactly what it would do for an absent value.
+    const raw = fixture();
+    raw.fuelCapacity = undefined;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.FuelLevel?.value[0]).toBe(42);
+    expect(t.FuelLevelPct?.value[0]).toBe(0);
+  });
+
+  it('does not divide by a zero capacity', () => {
+    const raw = fixture();
+    raw.fuelCapacity = 0;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.FuelLevelPct?.value[0]).toBe(0);
+    expect(Number.isFinite(t.FuelLevelPct?.value[0] as number)).toBe(true);
+  });
+});
