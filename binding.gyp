@@ -76,8 +76,8 @@
                     "OS=='win'",
                     {
                         "sources": [
-                            "src/app/irsdk/native/lmu/lmu_node.cc",
-                            "src/app/irsdk/native/lmu/lmu_struct.h",
+                            "src/app/lmu/native/lmu_node.cc",
+                            "src/app/lmu/native/lmu_struct.h",
                         ]
                     },
                 ]

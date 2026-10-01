@@ -1,4 +1,4 @@
-import type { LmuRawTelemetry } from '../native/lmu';
+import type { LmuRawTelemetry } from './native';
 
 /**
  * A complete, running LMU shared-memory frame.

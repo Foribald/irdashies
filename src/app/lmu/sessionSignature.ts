@@ -1,4 +1,4 @@
-import type { LmuRawSession } from '../native/lmu';
+import type { LmuRawSession } from './native';
 
 export const lmuSessionSignature = (session: LmuRawSession): string =>
   JSON.stringify({

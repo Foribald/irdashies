@@ -1,5 +1,5 @@
 import { CarLeftRight } from '@irdashies/types';
-import type { LmuRawTelemetry } from '../native/lmu';
+import type { LmuRawTelemetry } from './native';
 
 export interface LmuRelativePositions {
   available: boolean[];
@@ -30,10 +30,7 @@ export function deriveLmuRelativePositions(
 
   const playerX = raw.vehPosX[playerIdx];
   const playerZ = raw.vehPosZ[playerIdx];
-  const playerYaw = Math.atan2(
-    raw.vehOriX[playerIdx],
-    raw.vehOriZ[playerIdx]
-  );
+  const playerYaw = Math.atan2(raw.vehOriX[playerIdx], raw.vehOriZ[playerIdx]);
   if (![playerX, playerZ, playerYaw].every(Number.isFinite)) return null;
 
   const sin = Math.sin(playerYaw - Math.PI);

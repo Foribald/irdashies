@@ -1,4 +1,4 @@
-import type { LmuRawSession } from '../native/lmu';
+import type { LmuRawSession } from './native';
 
 /**
  * A complete LMU session snapshot.

@@ -12,26 +12,23 @@ import logger from '../../logger';
 import type { SessionLifecycle } from '../../sessionLifecycle';
 import type { ChannelBus } from '../channelBridge';
 import { createDefaultProcessorHost } from '../../processors/processorRegistry';
-import { mapLmuSession } from '../../irsdk/lmu/mapSession';
-import { lmuSessionSignature } from '../../irsdk/lmu/sessionSignature';
+import { mapLmuSession } from '../../lmu/mapSession';
+import { lmuSessionSignature } from '../../lmu/sessionSignature';
 import {
   LMU_DISCONNECT_GRACE_MS,
   shouldHoldLmuRunningState,
-} from '../../irsdk/lmu/runningState';
-import {
-  mapLmuCarLeftRight,
-  mapLmuTelemetry,
-} from '../../irsdk/lmu/mapTelemetry';
+} from '../../lmu/runningState';
+import { mapLmuCarLeftRight, mapLmuTelemetry } from '../../lmu/mapTelemetry';
 import {
   createLmuLapDistanceState,
   resetLmuLapDistanceState,
-} from '../../irsdk/lmu/lapDistance';
+} from '../../lmu/lapDistance';
 import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
   tinyPedalTrackMapDirectories,
-} from '../../irsdk/lmu/trackMap';
+} from '../../lmu/trackMap';
 import { app } from 'electron';
 import path from 'node:path';
 
@@ -75,7 +72,7 @@ export async function publishLmuSDKEvents(
   logger.info(
     '[lmuSdkBridge] Loading Le Mans Ultimate shared-memory bridge...'
   );
-  const { NativeLmu } = await import('../../irsdk/native/lmu');
+  const { NativeLmu } = await import('../../lmu/native');
   const sdk = new NativeLmu();
   const mapRecorder = new LmuTrackMapRecorder();
   const mapStorage = new LmuTrackMapStorage(

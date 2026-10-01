@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SampleBuffer } from './frontend/domain/lapTrace/lapSamples';
-import { createLmuLapDistanceState } from './app/irsdk/lmu/lapDistance';
-import { mapLmuTelemetry } from './app/irsdk/lmu/mapTelemetry';
-import { fixture } from './app/irsdk/lmu/rawFixture';
+import { createLmuLapDistanceState } from './app/lmu/lapDistance';
+import { mapLmuTelemetry } from './app/lmu/mapTelemetry';
+import { fixture } from './app/lmu/rawFixture';
 
 /**
  * The outcome the reconstruction exists for, end to end and offline.

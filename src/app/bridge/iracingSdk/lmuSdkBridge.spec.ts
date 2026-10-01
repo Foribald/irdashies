@@ -48,7 +48,7 @@ const rawFrame = () => {
   };
 };
 
-vi.mock('../../irsdk/native/lmu', () => ({
+vi.mock('../../lmu/native', () => ({
   NativeLmu: class {
     start = vi.fn(() => true);
     stop = vi.fn(() => true);
@@ -89,7 +89,7 @@ vi.mock('../../processors/processorRegistry', () => ({
 }));
 
 // Keeps the track-map work off the filesystem.
-vi.mock('../../irsdk/lmu/trackMap', () => ({
+vi.mock('../../lmu/trackMap', () => ({
   loadLmuTrackMap: () => null,
   tinyPedalTrackMapDirectories: () => [],
   LmuTrackMapRecorder: class {
@@ -103,23 +103,23 @@ vi.mock('../../irsdk/lmu/trackMap', () => ({
 
 // Mapping is covered by its own specs; here it only has to not be the thing
 // that throws.
-vi.mock('../../irsdk/lmu/mapTelemetry', () => ({
+vi.mock('../../lmu/mapTelemetry', () => ({
   mapLmuTelemetry: () => ({}),
   mapLmuCarLeftRight: () => 0,
 }));
 
 // The estimator has its own specs; here only the bridge's use of it matters --
 // that it is threaded into the mapper and reset at the right moments.
-vi.mock('../../irsdk/lmu/lapDistance', () => ({
+vi.mock('../../lmu/lapDistance', () => ({
   createLmuLapDistanceState: lapDistanceSpies.create,
   resetLmuLapDistanceState: lapDistanceSpies.reset,
 }));
 
-vi.mock('../../irsdk/lmu/mapSession', () => ({
+vi.mock('../../lmu/mapSession', () => ({
   mapLmuSession: () => ({ drivers: [] }),
 }));
 
-vi.mock('../../irsdk/lmu/sessionSignature', () => ({
+vi.mock('../../lmu/sessionSignature', () => ({
   lmuSessionSignature: () => 'signature',
 }));
 

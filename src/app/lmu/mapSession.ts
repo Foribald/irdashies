@@ -7,7 +7,7 @@ import type {
 
 import { lapTimeOrAbsent } from './sentinels';
 
-type Raw = import('../native/lmu').LmuRawSession;
+type Raw = import('./native').LmuRawSession;
 
 // LMU shared memory has no car numbers or series metadata. Drivers are
 // presented by their slot index; replace CarNumber sourcing if a REST/league

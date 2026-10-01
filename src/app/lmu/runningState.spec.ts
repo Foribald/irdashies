@@ -11,11 +11,7 @@ describe('LMU running state', () => {
 
   it('disconnects after the grace period or before a session starts', () => {
     expect(
-      shouldHoldLmuRunningState(
-        true,
-        1000,
-        1000 + LMU_DISCONNECT_GRACE_MS
-      )
+      shouldHoldLmuRunningState(true, 1000, 1000 + LMU_DISCONNECT_GRACE_MS)
     ).toBe(false);
     expect(shouldHoldLmuRunningState(false, 1000, 1001)).toBe(false);
   });

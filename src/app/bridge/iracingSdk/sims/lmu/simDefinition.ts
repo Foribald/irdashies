@@ -12,7 +12,7 @@ const lmu: SimDefinition = {
   priority: 90,
 
   createProbe: async (): Promise<SimProbe> => {
-    const { NativeLmu } = await import('../../../../irsdk/native/lmu');
+    const { NativeLmu } = await import('../../../../lmu/native');
     const sdk = new NativeLmu();
     return {
       start: () => sdk.start(),

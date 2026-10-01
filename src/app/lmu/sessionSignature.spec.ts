@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LmuRawSession } from '../native/lmu';
+import type { LmuRawSession } from './native';
 import { lmuSessionSignature } from './sessionSignature';
 
 const session = (playerVehicleIdx: number, playerHasVehicle: boolean) =>

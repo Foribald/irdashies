@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CarLeftRight } from '@irdashies/types';
-import type { LmuRawTelemetry } from '../native/lmu';
+import type { LmuRawTelemetry } from './native';
 import { mapLmuSectorTimes, mapLmuTelemetry } from './mapTelemetry';
 import { fixture } from './rawFixture';
 import { createLmuLapDistanceState } from './lapDistance';

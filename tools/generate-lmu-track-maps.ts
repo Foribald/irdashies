@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseTinyPedalTrackMap } from '../src/app/irsdk/lmu/trackMap';
+import { parseTinyPedalTrackMap } from '../src/app/lmu/trackMap';
 import trackDataBundle from '../src/frontend/assets/data/tracks-bundle.json';
 
 interface LovelyTurn {

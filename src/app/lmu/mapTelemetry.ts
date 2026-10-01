@@ -8,7 +8,7 @@ import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
 import { lapTimeOrAbsent } from './sentinels';
 import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
 
-type Raw = import('../native/lmu').LmuRawTelemetry;
+type Raw = import('./native').LmuRawTelemetry;
 
 const PHASE_TO_SESSION_STATE: Record<number, number> = {
   0: SessionState.Invalid,

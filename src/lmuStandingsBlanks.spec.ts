@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mapLmuSession } from './app/irsdk/lmu/mapSession';
-import { mapLmuTelemetry } from './app/irsdk/lmu/mapTelemetry';
-import { fixture } from './app/irsdk/lmu/rawFixture';
-import { fixture as sessionFixture } from './app/irsdk/lmu/rawSessionFixture';
+import { mapLmuSession } from './app/lmu/mapSession';
+import { mapLmuTelemetry } from './app/lmu/mapTelemetry';
+import { fixture } from './app/lmu/rawFixture';
+import { fixture as sessionFixture } from './app/lmu/rawSessionFixture';
 import { formatTime } from './frontend/utils/time';
 
 /**
