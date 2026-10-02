@@ -2,11 +2,13 @@ import {
   CarLeftRight,
   GlobalFlags,
   SessionState,
+  TIMED_SESSION_LAPS,
   type Telemetry,
 } from '@irdashies/types';
 import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
 import { lapTimeOrAbsent } from './sentinels';
 import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
+import { isLmuRaceSession } from './mapSession';
 
 type Raw = import('./native').LmuRawTelemetry;
 
@@ -237,16 +239,30 @@ export function mapLmuTelemetry(
   t.SessionTime = num(sessionClock);
   t.SessionTimeRemain = num(raw.sessionTimeRemaining);
   t.SessionTimeTotal = num(raw.endET);
+  // Only a race can be lap-limited; practice and qualifying are always timed,
+  // and an endurance race usually is too. In those, mMaxLaps is not a lap
+  // count -- rF2 signals "no limit" with a value far beyond any real race, so
+  // passing it through made the fuel calculator ask for a thousand laps' worth
+  // of fuel. TIMED_SESSION_LAPS is what iRacing reports in the same situation,
+  // and what every consumer already recognises.
+  //
+  // The upper bound is iRacing's own sentinel rather than an invented
+  // threshold: at or above it, the number cannot be a real lap count whatever
+  // encoding LMU chose for "unlimited".
+  const hasLapLimit =
+    isLmuRaceSession(raw.session) &&
+    raw.maxLaps > 0 &&
+    raw.maxLaps < TIMED_SESSION_LAPS;
   t.SessionLapsRemain = num(
-    raw.maxLaps > 0
+    hasLapLimit
       ? Math.max(
           0,
           raw.maxLaps -
             (playerIdx >= 0 ? (raw.vehTotalLaps[playerIdx] ?? 0) : 0)
         )
-      : 0
+      : TIMED_SESSION_LAPS
   );
-  t.SessionLapsTotal = num(raw.maxLaps);
+  t.SessionLapsTotal = num(hasLapLimit ? raw.maxLaps : TIMED_SESSION_LAPS);
   t.SessionTimeOfDay = num(raw.timeOfDay);
   t.SessionFlags = num(sessionFlags(raw));
   t.DisplayUnits = num(0);

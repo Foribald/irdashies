@@ -72,8 +72,17 @@ export function isLmuAiControlled(control?: number): boolean | undefined {
   return control === undefined ? undefined : control === LMU_CONTROL_AI;
 }
 
+/**
+ * Whether this LMU session id is a race.
+ *
+ * Only a race can have a lap limit; practice and qualifying are always timed.
+ * Exported so the telemetry mapper decides that the same way this does, from
+ * one copy of the thresholds.
+ */
+export const isLmuRaceSession = (session: number): boolean => session >= 10;
+
 function sessionType(session: number): string {
-  if (session >= 10) return 'Race';
+  if (isLmuRaceSession(session)) return 'Race';
   if (session >= 5 && session <= 8) return 'Open Qualify';
   if (session >= 1) return 'Practice';
   return 'Offline Testing';

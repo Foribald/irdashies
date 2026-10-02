@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFuelProjectionSnapshot } from '@irdashies/context';
+import { TIMED_SESSION_LAPS } from '@irdashies/types';
 import { useFuelStore, selectLapHistorySize } from './FuelStore';
 import type { FuelCalculation, FuelCalculatorSettings } from './types';
 import { useFuelLogger } from './useFuelLogger';
@@ -22,9 +23,6 @@ import logger from '@irdashies/utils/logger';
 
 /** Enable debug logging (set to true for testing/troubleshooting) */
 const DEBUG_LOGGING = false;
-
-/** Magic value indicating timed race (no lap limit) */
-const TIMED_RACE_LAPS_REMAINING = 32767;
 
 /** Default fuel tank capacity when unable to calculate */
 const DEFAULT_TANK_CAPACITY = 60;
@@ -609,7 +607,7 @@ export function useFuelCalculation(
       totalLaps = Math.ceil(calculatedTotalRaceLaps);
       lapsRemaining = estimatedLapsRemaining;
       lapsRemainingRefuel = lapsRemaining;
-    } else if (sessionLapsRemain === TIMED_RACE_LAPS_REMAINING) {
+    } else if (sessionLapsRemain === TIMED_SESSION_LAPS) {
       // Use centralized useTotalRaceLaps hook for timed race calculations
       if (hasValidRaceEstimate && calculatedTotalRaceLaps > 0) {
         // Use the hook's result directly
@@ -722,7 +720,7 @@ export function useFuelCalculation(
       lapsRemaining < 0 ||
       lapsRemaining > MAX_REASONABLE_LAPS
     ) {
-      if (sessionLapsRemain !== TIMED_RACE_LAPS_REMAINING) {
+      if (sessionLapsRemain !== TIMED_SESSION_LAPS) {
         lapsRemaining = sessionLapsRemain;
         lapsRemainingRefuel = sessionLapsRemain;
       } else {

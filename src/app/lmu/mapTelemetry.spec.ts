@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CarLeftRight } from '@irdashies/types';
+import { CarLeftRight, TIMED_SESSION_LAPS } from '@irdashies/types';
 import type { LmuRawTelemetry } from './native';
 import { mapLmuSectorTimes, mapLmuTelemetry } from './mapTelemetry';
 import { fixture } from './rawFixture';
@@ -14,8 +14,11 @@ describe('mapLmuTelemetry', () => {
     expect(t.SessionTime.value[0]).toBe(250.4);
     expect(t.SessionTimeTotal.value[0]).toBe(3600);
     expect(t.SessionTimeRemain.value[0]).toBe(2349.5);
-    expect(t.SessionLapsTotal.value[0]).toBe(12);
-    expect(t.SessionLapsRemain.value[0]).toBe(9);
+    // The fixture is session 1 -- practice -- which is always timed, so both
+    // report the no-lap-limit sentinel however many laps mMaxLaps claims.
+    // See the lap-limit specs below.
+    expect(t.SessionLapsTotal.value[0]).toBe(TIMED_SESSION_LAPS);
+    expect(t.SessionLapsRemain.value[0]).toBe(TIMED_SESSION_LAPS);
     expect(t.SessionNum.value[0]).toBe(1);
     expect(t.SessionState.value[0]).toBe(3);
     expect(t.SessionTimeOfDay.value[0]).toBe(0.45);
@@ -447,5 +450,70 @@ describe('mapLmuTelemetry fuel', () => {
 
     expect(t.FuelLevelPct?.value[0]).toBe(0);
     expect(Number.isFinite(t.FuelLevelPct?.value[0] as number)).toBe(true);
+  });
+});
+
+describe('mapLmuTelemetry session lap limit', () => {
+  /** Session ids below 10 are practice and qualifying; 10 and up are races. */
+  const RACE = 10;
+
+  it('counts down the laps of a lap-limited race', () => {
+    const raw = fixture();
+    raw.session = RACE;
+
+    const t = mapLmuTelemetry(raw);
+
+    // maxLaps 12, and the player (index 1) has completed 3.
+    expect(t.SessionLapsTotal?.value[0]).toBe(12);
+    expect(t.SessionLapsRemain?.value[0]).toBe(9);
+  });
+
+  it('reports no lap limit in practice and qualifying', () => {
+    // The bug this fixes: mMaxLaps is not a lap count in a timed session, and
+    // passing it through made the fuel calculator cap it at 1000 laps and ask
+    // for thousands of litres.
+    for (const session of [0, 1, 5, 8]) {
+      const raw = fixture();
+      raw.session = session;
+
+      const t = mapLmuTelemetry(raw);
+
+      expect(t.SessionLapsRemain?.value[0]).toBe(TIMED_SESSION_LAPS);
+      expect(t.SessionLapsTotal?.value[0]).toBe(TIMED_SESSION_LAPS);
+    }
+  });
+
+  it('reports no lap limit for a timed race', () => {
+    // An endurance race is a race, but still has no lap limit. rF2 signals
+    // that with a value far beyond any real race.
+    const raw = fixture();
+    raw.session = RACE;
+    raw.maxLaps = 2147483647;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.SessionLapsRemain?.value[0]).toBe(TIMED_SESSION_LAPS);
+    expect(t.SessionLapsTotal?.value[0]).toBe(TIMED_SESSION_LAPS);
+  });
+
+  it('reports no lap limit when a race reports zero laps', () => {
+    const raw = fixture();
+    raw.session = RACE;
+    raw.maxLaps = 0;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.SessionLapsRemain?.value[0]).toBe(TIMED_SESSION_LAPS);
+  });
+
+  it('never reports a negative remaining count', () => {
+    // Past the limit on the last lap.
+    const raw = fixture();
+    raw.session = RACE;
+    raw.maxLaps = 2;
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.SessionLapsRemain?.value[0]).toBe(0);
   });
 });
