@@ -229,3 +229,74 @@ describe('mapLmuSession absent lap times', () => {
     expect(byCar.get(0)?.FastestTime).toBe(134.5);
   });
 });
+
+describe('mapLmuSession car classes', () => {
+  const driverClass = (s: ReturnType<typeof mapLmuSession>, idx: number) =>
+    s.DriverInfo?.Drivers?.[idx];
+
+  it('colours classes by speed, fastest first', () => {
+    // LMU reports no class colour. The palette is ordered fastest to slowest,
+    // so Hypercar must take the first entry and LMGTE a later one.
+    const raw = fixture();
+    raw.drivers[0].className = 'Hypercar';
+    raw.drivers[1].className = 'LMP2';
+    raw.drivers[2].className = 'LMGTE';
+
+    const s = mapLmuSession(raw);
+
+    const colours = [0, 1, 2].map((i) => driverClass(s, i)?.CarClassColor);
+    expect(new Set(colours).size).toBe(3);
+    expect(colours[0]).toBe(16767577); // first palette entry
+  });
+
+  it('orders relative speed so the faster class compares greater', () => {
+    // FasterCarsFromBehind compares these directly; with every class at 0 it
+    // could never fire.
+    const raw = fixture();
+    raw.drivers[0].className = 'Hypercar';
+    raw.drivers[1].className = 'LMP2';
+    raw.drivers[2].className = 'LMGTE';
+
+    const s = mapLmuSession(raw);
+    const speeds = [0, 1, 2].map(
+      (i) => driverClass(s, i)?.CarClassRelSpeed ?? 0
+    );
+
+    expect(speeds[0]).toBeGreaterThan(speeds[1]);
+    expect(speeds[1]).toBeGreaterThan(speeds[2]);
+  });
+
+  it('accepts a class name written with or without its LM prefix', () => {
+    // The same class is written both ways; only the prefix is optional.
+    const withPrefix = fixture();
+    withPrefix.drivers[0].className = 'LMGT3';
+    const without = fixture();
+    without.drivers[0].className = 'GT3';
+
+    expect(driverClass(mapLmuSession(withPrefix), 0)?.CarClassColor).toBe(
+      driverClass(mapLmuSession(without), 0)?.CarClassColor
+    );
+  });
+
+  it('ignores spacing and case', () => {
+    const raw = fixture();
+    raw.drivers[0].className = 'lm gt3';
+
+    const spaced = driverClass(mapLmuSession(raw), 0)?.CarClassColor;
+
+    const plain = fixture();
+    plain.drivers[0].className = 'LMGT3';
+    expect(spaced).toBe(driverClass(mapLmuSession(plain), 0)?.CarClassColor);
+  });
+
+  it('gives an unknown class no colour rather than another class colour', () => {
+    // Borrowing a colour would claim two classes share a speed tier.
+    const raw = fixture();
+    raw.drivers[0].className = 'Something Else';
+
+    const s = mapLmuSession(raw);
+
+    expect(driverClass(s, 0)?.CarClassColor).toBe(0);
+    expect(driverClass(s, 0)?.CarClassRelSpeed).toBe(0);
+  });
+});

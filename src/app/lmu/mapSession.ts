@@ -5,6 +5,7 @@ import type {
   LmuTrackMap,
 } from '@irdashies/types';
 
+import { classColourForRank } from '@irdashies/types';
 import { lapTimeOrAbsent } from './sentinels';
 
 type Raw = import('./native').LmuRawSession;
@@ -73,6 +74,52 @@ export function isLmuAiControlled(control?: number): boolean | undefined {
 }
 
 /**
+ * LMU's car classes, fastest first.
+ *
+ * Static knowledge, because the shared memory carries no class ordering. The
+ * per-car class id the addon hands out is first-encounter order -- whichever
+ * class appears first in the scoring array gets 0 -- so it says nothing about
+ * speed, and mEstimatedLapTime is a live estimate of the lap being driven, so
+ * it moves with traffic and fuel and would reshuffle the colours mid-session.
+ *
+ * Rank drives both the class colour and the relative speed the faster-car
+ * warning compares, so the two can never disagree about which class is quicker.
+ */
+const LMU_CLASSES_FASTEST_FIRST = [
+  'Hypercar',
+  'LMP2',
+  'LMP3',
+  'LMGT3',
+  'LMGTE',
+] as const;
+
+/** Upper-cased and stripped of punctuation, so "LM GT3" and "LMGT3" match. */
+const normaliseClassName = (name: string) =>
+  name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const LMU_CLASS_RANKS: Record<string, number> = Object.fromEntries(
+  LMU_CLASSES_FASTEST_FIRST.flatMap((name, rank) => {
+    const key = normaliseClassName(name);
+    // Also accept the name without its "LM" prefix: the same class is written
+    // both ways ("GT3" and "LMGT3"), and this repo's own fixtures use the
+    // short form. Only the prefix is optional -- nothing here guesses a rank.
+    const short = key.startsWith('LM') ? key.slice(2) : undefined;
+    return short
+      ? [
+          [key, rank],
+          [short, rank],
+        ]
+      : [[key, rank]];
+  })
+);
+
+/** Speed rank of a class, or -1 when it is not one this build knows. */
+const lmuClassRank = (className: string | undefined): number =>
+  className === undefined
+    ? -1
+    : (LMU_CLASS_RANKS[normaliseClassName(className)] ?? -1);
+
+/**
  * Whether this LMU session id is a race.
  *
  * Only a race can have a lap limit; practice and qualifying are always timed.
@@ -124,13 +171,22 @@ export function mapLmuSession(
     CarCfgName: null,
     CarCfgCustomPaintExt: null,
     CarClassShortName: d.className,
-    CarClassRelSpeed: 0,
+    // Higher is faster: the faster-car warning compares these directly, and
+    // with every class at 0 it could never fire. Derived from the same rank
+    // as the colour, so the two agree by construction.
+    CarClassRelSpeed:
+      lmuClassRank(d.className) >= 0
+        ? LMU_CLASSES_FASTEST_FIRST.length - lmuClassRank(d.className)
+        : 0,
     CarClassLicenseLevel: 0,
     CarClassMaxFuelPct: '',
     CarClassWeightPenalty: '',
     CarClassPowerAdjust: '',
     CarClassDryTireSetLimit: '',
-    CarClassColor: 0,
+    // LMU reports no class colour, so one is assigned from the palette by
+    // speed rank. An unknown class takes no colour and falls back to the
+    // renderer's neutral default rather than borrowing another class's.
+    CarClassColor: classColourForRank(lmuClassRank(d.className)),
     CarClassEstLapTime: d.estimatedLapTime,
     IRating: 0,
     LicLevel: 0,

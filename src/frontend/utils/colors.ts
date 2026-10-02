@@ -1,3 +1,5 @@
+import { CLASS_COLOURS_FASTEST_FIRST } from '@irdashies/types';
+
 export interface TailwindStyles {
   driverIcon: string;
   classHeader: string;
@@ -6,17 +8,26 @@ export interface TailwindStyles {
   borderColor: string;
 }
 
-// iRacing car class decimals to color names (6 known tiers)
-const IRACING_CLASS_COLOR_MAP: Record<number, string> = {
-  16767577: 'yellow', // Class 1 - fastest
-  3395327: 'blue', // Class 2
-  16734344: 'red', // Class 3
-  11430911: 'cyan', // Class 4
-  5504887: 'pink', // Class 5
-  13849600: 'purple', // Class 6 
-  13421772: 'amber', // Class 7
-  39321: 'lime', // Class 8  - slowest
-};
+// Class colour integers to colour names, fastest tier first. Built from the
+// shared ordered palette so a sim-side mapper assigning colours by speed rank
+// and this lookup cannot disagree about which integer means which tier.
+const CLASS_COLOUR_NAMES_FASTEST_FIRST = [
+  'yellow',
+  'blue',
+  'red',
+  'cyan',
+  'pink',
+  'purple',
+  'amber',
+  'lime',
+] as const;
+
+const IRACING_CLASS_COLOR_MAP: Record<number, string> = Object.fromEntries(
+  CLASS_COLOURS_FASTEST_FIRST.map((colour, rank) => [
+    colour,
+    CLASS_COLOUR_NAMES_FASTEST_FIRST[rank],
+  ])
+);
 
 // Color names to hex values for classColorMap lookup
 const COLOR_NAME_TO_HEX: Record<string, string> = {
