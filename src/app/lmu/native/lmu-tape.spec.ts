@@ -27,7 +27,7 @@ const describeIfBuilt = built ? describe : describe.skip;
 let workDir: string | undefined;
 const tapeFor = (name: string) => {
   workDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'lmu-tape-'));
-  return path.join(workDir, `${name}.irlmu`);
+  return path.join(workDir, `${name}.lmudt`);
 };
 
 const writeFixture = (tape: string, frames: number) =>

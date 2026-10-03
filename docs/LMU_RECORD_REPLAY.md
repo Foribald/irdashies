@@ -1,6 +1,6 @@
 # Le Mans Ultimate Telemetry Record/Replay
 
-The `lmu_replay` Windows tool records LMU's shared-memory block to a `.irlmu`
+The `lmu_replay` Windows tool records LMU's shared-memory block to a `.lmudt`
 tape, and `lmu_tape_node` plays one back through the application.
 
 It is the LMU counterpart of the iRacing tooling in
@@ -49,13 +49,13 @@ Produces `build\Release\lmu_replay.exe` and
 The recorder can start before the sim and waits for the mapping to appear:
 
 ```powershell
-npm run lmu:record -- --output telemetry-captures\session.irlmu
+npm run lmu:record -- --output telemetry-captures\session.lmudt
 ```
 
 Stop with Ctrl+C, or bound it:
 
 ```powershell
-npm run lmu:record -- --output telemetry-captures\session.irlmu --duration 120
+npm run lmu:record -- --output telemetry-captures\session.lmudt --duration 120
 ```
 
 `--poll <ms>` sets the capture cadence; it defaults to 10 ms, matching the
@@ -69,7 +69,7 @@ writes a disconnect record and waits for it to come back.
 ## Inspect a tape
 
 ```powershell
-npm run lmu:inspect -- --input telemetry-captures\session.irlmu
+npm run lmu:inspect -- --input telemetry-captures\session.lmudt
 ```
 
 Reports the record counts, duration, and the compression achieved against raw
@@ -78,9 +78,9 @@ snapshots. It decodes every record, so it also verifies the checksums.
 ## Replay through the application
 
 ```bash
-npm run lmu:replay:app -- --input telemetry-captures/session.irlmu
-npm run lmu:replay:app -- --input telemetry-captures/session.irlmu --speed 2
-npm run lmu:replay:app -- --input telemetry-captures/session.irlmu --loop
+npm run lmu:replay:app -- --input telemetry-captures/session.lmudt
+npm run lmu:replay:app -- --input telemetry-captures/session.lmudt --speed 2
+npm run lmu:replay:app -- --input telemetry-captures/session.lmudt --loop
 ```
 
 The launcher sets these out-of-band development variables:
@@ -99,7 +99,7 @@ that is.
 ## A synthetic tape, without the sim
 
 ```powershell
-npm run lmu:fixture -- --output telemetry-captures\synthetic.irlmu --frames 600
+npm run lmu:fixture -- --output telemetry-captures\synthetic.lmudt --frames 600
 ```
 
 Two cars on a made-up circuit with a player car, moving lap distance, fuel
@@ -109,7 +109,7 @@ cover the format and the player without needing a copy of LMU.
 ## Not provided
 
 **There is no curated committed fixture.** `npm run lmu:replay:curated` points
-at `test-data/telemetry/lmu-session.irlmu`, which does not exist yet — it needs
+at `test-data/telemetry/lmu-session.lmudt`, which does not exist yet — it needs
 a real session recorded on a machine running LMU. Record one and commit it, or
 keep it out of the repository and pass `--input` explicitly. The iRacing
 equivalent is 348 MB, so weigh that before committing one.

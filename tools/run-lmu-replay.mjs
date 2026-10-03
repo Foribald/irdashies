@@ -15,7 +15,7 @@ const arguments_ = process.argv.slice(2);
 const input = optionValue(arguments_, '--input');
 if (!input) {
   process.stderr.write(
-    'Usage: npm run lmu:replay:app -- --input <capture.irlmu> ' +
+    'Usage: npm run lmu:replay:app -- --input <capture.lmudt> ' +
       '[--speed <0.25-100>] [--loop]\n'
   );
   process.exitCode = 2;
@@ -32,8 +32,8 @@ if (!input) {
   ) {
     process.stderr.write('--speed must be between 0.25 and 100\n');
     process.exitCode = 2;
-  } else if (path.extname(input).toLowerCase() !== '.irlmu') {
-    process.stderr.write('--input must be an .irlmu LMU tape\n');
+  } else if (path.extname(input).toLowerCase() !== '.lmudt') {
+    process.stderr.write('--input must be an .lmudt LMU tape\n');
     process.exitCode = 2;
   } else {
     const env = {
