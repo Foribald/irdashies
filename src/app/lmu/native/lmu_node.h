@@ -28,16 +28,12 @@ private:
     int GetClassId(const char *className) const;
     const LMUVehicleTelemetry *GetPlayerTelemetry() const;
     const LMUVehicleTelemetry *GetVehicleTelemetryById(int id) const;
-    LMUSnapshotState LiveState() const;
     bool CaptureSnapshot();
     bool IsLive() const;
     int VehicleCount() const;
     void FillVehicleArrays(Napi::Object &out) const;
     void Unmap();
 
-    HANDLE _hMap;
-    uint8_t *_view;
-    const LMUObjectOut *_mapped;
     LMUObjectOut _snapshot;
     bool _hasSnapshot;
     mutable std::map<std::string, int> _classIds;

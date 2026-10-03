@@ -77,6 +77,8 @@
                     {
                         "sources": [
                             "src/app/lmu/native/lmu_node.cc",
+                            "src/app/lmu/native/lmu_source_shm.cpp",
+                            "src/app/lmu/native/lmu_source.h",
                             "src/app/lmu/native/lmu_struct.h",
                         ]
                     },
@@ -97,6 +99,50 @@
                             "src/app/irsdk/native/replay/irsdk_tape.cpp",
                             "src/app/irsdk/native/replay/irsdk_tape.h",
                             "src/app/irsdk/native/lib/irsdk_defines.h",
+                        ]
+                    },
+                ]
+            ],
+        },
+        {
+            "target_name": "lmu_replay",
+            "type": "none",
+            "sources": [],
+            "conditions": [
+                [
+                    "OS=='win'",
+                    {
+                        "type": "executable",
+                        "sources": [
+                            "src/app/lmu/native/replay/lmu_replay_main.cpp",
+                            "src/app/lmu/native/replay/lmu_tape.cpp",
+                            "src/app/lmu/native/replay/lmu_tape.h",
+                            "src/app/lmu/native/lmu_struct.h",
+                        ]
+                    },
+                ]
+            ],
+        },
+        {
+            "target_name": "lmu_tape_node",
+            "sources": [],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+            "include_dirs": [
+                "<!(node -p \"require('node-addon-api').include_dir\")",
+            ],
+            "conditions": [
+                [
+                    "OS=='win'",
+                    {
+                        "sources": [
+                            "src/app/lmu/native/lmu_node.cc",
+                            "src/app/lmu/native/replay/lmu_source_tape.cpp",
+                            "src/app/lmu/native/replay/lmu_tape.cpp",
+                            "src/app/lmu/native/replay/lmu_tape.h",
+                            "src/app/lmu/native/lmu_source.h",
+                            "src/app/lmu/native/lmu_struct.h",
                         ]
                     },
                 ]

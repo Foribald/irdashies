@@ -1,12 +1,11 @@
 #include "lmu_node.h"
+#include "lmu_source.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 namespace
 {
-const wchar_t *LMU_SHARED_MEMORY_FILE = L"LMU_Data";
-
 std::string ReadCString(const char *ptr, size_t maxLen)
 {
   size_t len = 0;
@@ -50,9 +49,6 @@ Napi::Object LmuSdkNode::Init(Napi::Env env, Napi::Object exports)
 
 LmuSdkNode::LmuSdkNode(const Napi::CallbackInfo &info)
   : Napi::ObjectWrap<LmuSdkNode>(info)
-  , _hMap(NULL)
-  , _view(NULL)
-  , _mapped(NULL)
   , _snapshot{}
   , _hasSnapshot(false)
 {
@@ -71,27 +67,9 @@ Napi::Value LmuSdkNode::Start(const Napi::CallbackInfo &info)
 
   Unmap();
 
-  _hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, LMU_SHARED_MEMORY_FILE);
-  if (_hMap == NULL)
+  if (!irdashies::lmu::sourceOpen())
     return Napi::Boolean::New(env, false);
 
-  _view = static_cast<uint8_t *>(MapViewOfFile(_hMap, FILE_MAP_READ, 0, 0, 0));
-  if (_view == NULL)
-  {
-    CloseHandle(_hMap);
-    _hMap = NULL;
-    return Napi::Boolean::New(env, false);
-  }
-
-  MEMORY_BASIC_INFORMATION region{};
-  if (VirtualQuery(_view, &region, sizeof(region)) == 0 ||
-      region.RegionSize < sizeof(LMUObjectOut))
-  {
-    Unmap();
-    return Napi::Boolean::New(env, false);
-  }
-
-  _mapped = reinterpret_cast<const LMUObjectOut *>(_view);
   CaptureSnapshot();
   _classIds.clear();
   return Napi::Boolean::New(env, true);
@@ -99,18 +77,8 @@ Napi::Value LmuSdkNode::Start(const Napi::CallbackInfo &info)
 
 void LmuSdkNode::Unmap()
 {
-  _mapped = NULL;
   _hasSnapshot = false;
-  if (_view != NULL)
-  {
-    UnmapViewOfFile(_view);
-    _view = NULL;
-  }
-  if (_hMap != NULL)
-  {
-    CloseHandle(_hMap);
-    _hMap = NULL;
-  }
+  irdashies::lmu::sourceClose();
   _classIds.clear();
 }
 
@@ -131,54 +99,18 @@ bool LmuSdkNode::IsLive() const
   if (!_hasSnapshot || _snapshot.generic.gameVersion <= 0)
     return false;
 
-  const auto window = reinterpret_cast<HWND>(
-      static_cast<uintptr_t>(_snapshot.generic.appInfo.mAppWindow));
-  return window != NULL && ::IsWindow(window);
-}
-
-LMUSnapshotState LmuSdkNode::LiveState() const
-{
-  return {
-      _mapped->generic.events.SME_UPDATE_SCORING,
-      _mapped->generic.events.SME_UPDATE_TELEMETRY,
-  };
+  return irdashies::lmu::sourceIsLive(_snapshot);
 }
 
 bool LmuSdkNode::CaptureSnapshot()
 {
-  if (_mapped == NULL)
+  // Coherence, retries and the live-window check belong to whichever source
+  // this build linked; see lmu_source.h.
+  if (!irdashies::lmu::sourceCapture(_snapshot))
     return false;
 
-  for (int attempt = 0; attempt < 4; ++attempt)
-  {
-    // Cheap gate before the expensive part. The copy below is ~317 KB out of
-    // a mapping the sim is actively writing, and an attempt that was going to
-    // fail used to pay for it in full before anything was checked. Two
-    // counter reads cost sixteen bytes and catch a writer mid-burst first.
-    const LMUSnapshotState before = LiveState();
-    MemoryBarrier();
-    if (!IsQuietLmuWriter(before, LiveState()))
-      continue;
-
-    MemoryBarrier();
-    LMUObjectOut candidate;
-    std::memcpy(&candidate, _mapped, sizeof(candidate));
-    MemoryBarrier();
-    const LMUSnapshotState snapshot = {
-      candidate.generic.events.SME_UPDATE_SCORING,
-      candidate.generic.events.SME_UPDATE_TELEMETRY,
-    };
-    const LMUSnapshotState after = LiveState();
-
-    if (!IsCoherentLmuSnapshot(before, snapshot, after))
-      continue;
-
-    _snapshot = candidate;
-    _hasSnapshot = true;
-    return true;
-  }
-
-  return false;
+  _hasSnapshot = true;
+  return true;
 }
 
 int LmuSdkNode::GetClassId(const char *className) const
