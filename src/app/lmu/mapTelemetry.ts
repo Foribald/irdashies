@@ -446,11 +446,16 @@ export function mapLmuTelemetry(
     raw.unfilteredClutch === undefined ? undefined : 1 - raw.unfilteredClutch
   );
   t.BrakeABSactive = bool(raw.absActive);
+  // Percent front, which is what dcBrakeBias means and what the widget
+  // formats with a '%' unit. LMU publishes only mRearBrakeBias, as a 0-1
+  // fraction -- there is no mFrontBrakeBias, front is its complement -- so the
+  // complement alone gave 0.508 where 50.8 was wanted, and the widget showed a
+  // bias of "0.5%" that barely moved as it was adjusted.
   t.dcBrakeBias = num(
-    raw.rearBrakeBias === undefined ? 0 : 1 - raw.rearBrakeBias
+    raw.rearBrakeBias === undefined ? 0 : (1 - raw.rearBrakeBias) * 100
   );
   t.dcPeakBrakeBias = num(
-    raw.rearBrakeBias === undefined ? 0 : 1 - raw.rearBrakeBias
+    raw.rearBrakeBias === undefined ? 0 : (1 - raw.rearBrakeBias) * 100
   );
   t.dcPitSpeedLimiterToggle = bool(raw.speedLimiter);
   t.PitstopActive = bool(false);

@@ -66,7 +66,7 @@ describe('mapLmuTelemetry', () => {
     expect(t.SteeringWheelAngle.value[0]).toBeCloseTo(
       0.29 * ((480 * Math.PI) / 360)
     );
-    expect(t.dcBrakeBias.value[0]).toBeCloseTo(0.45);
+    expect(t.dcBrakeBias.value[0]).toBeCloseTo(45);
     expect(t.dcPitSpeedLimiterToggle.value[0]).toBe(false);
     expect(t.LatAccel.value[0]).toBeCloseTo(9.80665);
     expect(t.LongAccel.value[0]).toBeCloseTo(-19.6133);
@@ -515,5 +515,39 @@ describe('mapLmuTelemetry session lap limit', () => {
     const t = mapLmuTelemetry(raw);
 
     expect(t.SessionLapsRemain?.value[0]).toBe(0);
+  });
+});
+
+describe('mapLmuTelemetry brake bias', () => {
+  /**
+   * LMU publishes only mRearBrakeBias, as a 0-1 fraction; there is no
+   * mFrontBrakeBias, front is simply its complement. dcBrakeBias is percent
+   * front, which is how the widget formats it, so the complement has to be
+   * scaled -- otherwise a 50.8:49.2 split in LMU's own UI showed as "0.5%"
+   * and looked frozen as it was adjusted.
+   */
+  it('reports percent front, matching the split LMU shows', () => {
+    const raw = { ...fixture(), rearBrakeBias: 0.492 };
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.dcBrakeBias.value[0]).toBeCloseTo(50.8, 4);
+    expect(t.dcPeakBrakeBias.value[0]).toBeCloseTo(50.8, 4);
+  });
+
+  it('moves a full point of bias as a full point', () => {
+    const forward = mapLmuTelemetry({ ...fixture(), rearBrakeBias: 0.46 });
+    const back = mapLmuTelemetry({ ...fixture(), rearBrakeBias: 0.47 });
+
+    expect(
+      (forward.dcBrakeBias.value[0] as number) -
+        (back.dcBrakeBias.value[0] as number)
+    ).toBeCloseTo(1, 4);
+  });
+
+  it('reports no bias when the sim omits it', () => {
+    const t = mapLmuTelemetry({ ...fixture(), rearBrakeBias: undefined });
+
+    expect(t.dcBrakeBias.value[0]).toBe(0);
   });
 });
