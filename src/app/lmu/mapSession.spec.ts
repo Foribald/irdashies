@@ -271,6 +271,30 @@ describe('mapLmuSession car classes', () => {
     expect(driverClass(s, 2)?.CarClassColor).toBe(LMU_CLASS_COLOURS.LMGTE);
   });
 
+  it('resolves an abbreviated class name to its class', () => {
+    // LMU reports "Hyper", not "Hypercar" -- the opposite direction to the
+    // championship-qualified names, and it left Hypercar with no colour too.
+    const raw = fixture();
+    raw.drivers[0].className = 'Hyper';
+
+    const s = mapLmuSession(raw);
+
+    expect(driverClass(s, 0)?.CarClassShortName).toBe('Hypercar');
+    expect(driverClass(s, 0)?.CarClassColor).toBe(LMU_CLASS_COLOURS.Hypercar);
+  });
+
+  it('refuses an abbreviation that names more than one class', () => {
+    // "LMGT" prefixes both LMGT3 and LMGTE. Guessing between them would put
+    // cars in the wrong class; no match is the honest answer.
+    const raw = fixture();
+    raw.drivers[0].className = 'LMGT';
+
+    const s = mapLmuSession(raw);
+
+    expect(driverClass(s, 0)?.CarClassShortName).toBe('LMGT');
+    expect(driverClass(s, 0)?.CarClassColor).toBe(0);
+  });
+
   it('keeps an unknown class name rather than dropping it', () => {
     const raw = fixture();
     raw.drivers[0].className = 'Garage56';

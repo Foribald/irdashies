@@ -122,22 +122,31 @@ const LMU_CLASS_KEYS: readonly (readonly [string, LmuClass])[] =
  * The canonical class a name refers to, or undefined when it is not one this
  * build knows.
  *
- * LMU qualifies its class names with the championship they belong to: the
- * shared memory reports "LMP2_ELMS", not "LMP2". Matching on a prefix rather
- * than the whole string is what lets that through, and it generalises to the
- * other championships without a list of them to maintain. The longest key
- * wins, so a suffixed name cannot be captured by a shorter class whose name
- * happens to start the same way.
+ * LMU's spelling differs from the canonical name in both directions, so this
+ * matches on a prefix either way round:
  *
- * Getting this wrong is not cosmetic. An unmatched class takes no rank and no
+ * - Longer than the class. It qualifies names with the championship they
+ *   belong to -- "LMP2_ELMS", not "LMP2". The longest matching key wins, so a
+ *   suffixed name cannot be captured by a shorter class whose name happens to
+ *   start the same way.
+ * - Shorter than the class. It abbreviates -- "Hyper", not "Hypercar". Here
+ *   the name has to pick out exactly one class to be usable: "LMGT" prefixes
+ *   both LMGT3 and LMGTE, and guessing between them would be worse than
+ *   admitting the name is not one this build knows.
+ *
+ * Neither direction is cosmetic. An unmatched class takes no rank and no
  * colour, which is why LMP2 cars showed no class colour under their number
- * while LMP3 -- reported unqualified -- did.
+ * while LMP3 -- reported unqualified -- did, and why Hypercar showed none
+ * either.
  */
 const lmuCanonicalClass = (
   className: string | undefined
 ): LmuClass | undefined => {
   if (className === undefined) return undefined;
   const key = normaliseClassName(className);
+  if (key.length === 0) return undefined;
+
+  // A name at least as long as the class it names: take the longest match.
   let match: LmuClass | undefined;
   let matchedLength = 0;
   for (const [candidate, name] of LMU_CLASS_KEYS) {
@@ -146,7 +155,15 @@ const lmuCanonicalClass = (
       matchedLength = candidate.length;
     }
   }
-  return match;
+  if (match !== undefined) return match;
+
+  // An abbreviation, accepted only where it names one class unambiguously.
+  const abbreviated = new Set(
+    LMU_CLASS_KEYS.filter(([candidate]) => candidate.startsWith(key)).map(
+      ([, name]) => name
+    )
+  );
+  return abbreviated.size === 1 ? [...abbreviated][0] : undefined;
 };
 
 /** Speed rank of a class, or -1 when it is not one this build knows. */
