@@ -5,7 +5,7 @@ import type {
   LmuTrackMap,
 } from '@irdashies/types';
 
-import { classColourForRank } from '@irdashies/types';
+import { classColourForRank, LMU_CLASS_COLOURS } from '@irdashies/types';
 import { lapTimeOrAbsent } from './sentinels';
 
 type Raw = import('./native').LmuRawSession;
@@ -97,27 +97,65 @@ const LMU_CLASSES_FASTEST_FIRST = [
 const normaliseClassName = (name: string) =>
   name.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-const LMU_CLASS_RANKS: Record<string, number> = Object.fromEntries(
-  LMU_CLASSES_FASTEST_FIRST.flatMap((name, rank) => {
+type LmuClass = (typeof LMU_CLASSES_FASTEST_FIRST)[number];
+
+/**
+ * Normalised spellings that each canonical class answers to.
+ *
+ * Also accepts the name without its "LM" prefix: the same class is written
+ * both ways ("GT3" and "LMGT3"), and this repo's own fixtures use the short
+ * form. Only the prefix is optional -- nothing here guesses a class.
+ */
+const LMU_CLASS_KEYS: readonly (readonly [string, LmuClass])[] =
+  LMU_CLASSES_FASTEST_FIRST.flatMap((name) => {
     const key = normaliseClassName(name);
-    // Also accept the name without its "LM" prefix: the same class is written
-    // both ways ("GT3" and "LMGT3"), and this repo's own fixtures use the
-    // short form. Only the prefix is optional -- nothing here guesses a rank.
     const short = key.startsWith('LM') ? key.slice(2) : undefined;
     return short
-      ? [
-          [key, rank],
-          [short, rank],
-        ]
-      : [[key, rank]];
-  })
-);
+      ? ([
+          [key, name],
+          [short, name],
+        ] as const)
+      : ([[key, name]] as const);
+  });
+
+/**
+ * The canonical class a name refers to, or undefined when it is not one this
+ * build knows.
+ *
+ * LMU qualifies its class names with the championship they belong to: the
+ * shared memory reports "LMP2_ELMS", not "LMP2". Matching on a prefix rather
+ * than the whole string is what lets that through, and it generalises to the
+ * other championships without a list of them to maintain. The longest key
+ * wins, so a suffixed name cannot be captured by a shorter class whose name
+ * happens to start the same way.
+ *
+ * Getting this wrong is not cosmetic. An unmatched class takes no rank and no
+ * colour, which is why LMP2 cars showed no class colour under their number
+ * while LMP3 -- reported unqualified -- did.
+ */
+const lmuCanonicalClass = (
+  className: string | undefined
+): LmuClass | undefined => {
+  if (className === undefined) return undefined;
+  const key = normaliseClassName(className);
+  let match: LmuClass | undefined;
+  let matchedLength = 0;
+  for (const [candidate, name] of LMU_CLASS_KEYS) {
+    if (key.startsWith(candidate) && candidate.length > matchedLength) {
+      match = name;
+      matchedLength = candidate.length;
+    }
+  }
+  return match;
+};
 
 /** Speed rank of a class, or -1 when it is not one this build knows. */
-const lmuClassRank = (className: string | undefined): number =>
-  className === undefined
+const lmuClassRank = (className: string | undefined): number => {
+  const canonical = lmuCanonicalClass(className);
+  return canonical === undefined
     ? -1
-    : (LMU_CLASS_RANKS[normaliseClassName(className)] ?? -1);
+    : LMU_CLASSES_FASTEST_FIRST.indexOf(canonical);
+};
 
 /**
  * Whether this LMU session id is a race.
@@ -170,7 +208,11 @@ export function mapLmuSession(
     CarCfg: 0,
     CarCfgName: null,
     CarCfgCustomPaintExt: null,
-    CarClassShortName: d.className,
+    // The canonical class, so the standings group by "LMP2" rather than the
+    // championship-qualified "LMP2_ELMS" the sim reports. An unrecognised
+    // class keeps whatever LMU called it -- better a name this build does not
+    // know than no name at all.
+    CarClassShortName: lmuCanonicalClass(d.className) ?? d.className,
     // Higher is faster: the faster-car warning compares these directly, and
     // with every class at 0 it could never fire. Derived from the same rank
     // as the colour, so the two agree by construction.
@@ -183,10 +225,13 @@ export function mapLmuSession(
     CarClassWeightPenalty: '',
     CarClassPowerAdjust: '',
     CarClassDryTireSetLimit: '',
-    // LMU reports no class colour, so one is assigned from the palette by
-    // speed rank. An unknown class takes no colour and falls back to the
-    // renderer's neutral default rather than borrowing another class's.
-    CarClassColor: classColourForRank(lmuClassRank(d.className)),
+    // LMU reports no class colour, so it takes the series' own livery for its
+    // class. An unknown class falls back to the rank-based palette, and failing
+    // that to no colour and the renderer's neutral default, rather than
+    // borrowing another class's.
+    CarClassColor:
+      LMU_CLASS_COLOURS[lmuCanonicalClass(d.className) ?? ''] ??
+      classColourForRank(lmuClassRank(d.className)),
     CarClassEstLapTime: d.estimatedLapTime,
     IRating: 0,
     LicLevel: 0,

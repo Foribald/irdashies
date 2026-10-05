@@ -24,6 +24,23 @@ export const CLASS_COLOURS_FASTEST_FIRST: readonly number[] = [
 export const NO_CLASS_COLOUR = 0;
 
 /**
+ * Le Mans Ultimate's class colours, keyed by canonical class name.
+ *
+ * LMU reports no class colour of its own, and unlike the rank-based fallback
+ * above its grid is a fixed, known set of five classes -- so they get the
+ * series' own liveries rather than whichever palette slot their speed rank
+ * happened to land on. These are exact values, not members of the Tailwind
+ * palette, so `colors.ts` carries a matching entry for each.
+ */
+export const LMU_CLASS_COLOURS: Readonly<Record<string, number>> = {
+  Hypercar: 0xff000a,
+  LMP2: 0x0690ff,
+  LMP3: 0x763993,
+  LMGT3: 0x00ff6a,
+  LMGTE: 0xfff600,
+};
+
+/**
  * The palette entry for a class at this speed rank, 0 being the fastest.
  *
  * A rank past the end of the palette returns no colour rather than wrapping:

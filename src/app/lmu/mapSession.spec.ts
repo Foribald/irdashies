@@ -6,6 +6,7 @@ import {
   resolveLmuTrackId,
 } from './mapSession';
 import { fixture } from './rawSessionFixture';
+import { LMU_CLASS_COLOURS } from '@irdashies/types';
 
 describe('mapLmuSession', () => {
   it('maps weekend info', () => {
@@ -36,7 +37,7 @@ describe('mapLmuSession', () => {
     expect(player.CarScreenName).toBe('Ferrari 296 GT3');
     expect(player.CarID).toBe(10006);
     expect(s.DriverInfo.Drivers[0].CarID).toBe(10003);
-    expect(player.CarClassShortName).toBe('GT3');
+    expect(player.CarClassShortName).toBe('LMGT3');
     expect(player.CarClassID).toBe(0);
     expect(s.DriverInfo.DriverCarRedLine).toBe(9000);
   });
@@ -234,9 +235,9 @@ describe('mapLmuSession car classes', () => {
   const driverClass = (s: ReturnType<typeof mapLmuSession>, idx: number) =>
     s.DriverInfo?.Drivers?.[idx];
 
-  it('colours classes by speed, fastest first', () => {
-    // LMU reports no class colour. The palette is ordered fastest to slowest,
-    // so Hypercar must take the first entry and LMGTE a later one.
+  it('gives each class the series livery for it', () => {
+    // LMU reports no class colour, so these come from LMU_CLASS_COLOURS rather
+    // than the rank-ordered fallback palette.
     const raw = fixture();
     raw.drivers[0].className = 'Hypercar';
     raw.drivers[1].className = 'LMP2';
@@ -246,7 +247,38 @@ describe('mapLmuSession car classes', () => {
 
     const colours = [0, 1, 2].map((i) => driverClass(s, i)?.CarClassColor);
     expect(new Set(colours).size).toBe(3);
-    expect(colours[0]).toBe(16767577); // first palette entry
+    expect(colours[0]).toBe(LMU_CLASS_COLOURS.Hypercar);
+    expect(colours[1]).toBe(LMU_CLASS_COLOURS.LMP2);
+    expect(colours[2]).toBe(LMU_CLASS_COLOURS.LMGTE);
+  });
+
+  it('resolves a championship-qualified class name to its class', () => {
+    // LMU reports "LMP2_ELMS", not "LMP2". Left unmatched it took no rank and
+    // no colour, which is why LMP2 cars showed none under their number while
+    // LMP3 -- reported unqualified -- did.
+    const raw = fixture();
+    raw.drivers[0].className = 'LMP2_ELMS';
+    raw.drivers[1].className = 'GT3';
+    raw.drivers[2].className = 'GTE';
+
+    const s = mapLmuSession(raw);
+
+    expect(driverClass(s, 0)?.CarClassShortName).toBe('LMP2');
+    expect(driverClass(s, 0)?.CarClassColor).toBe(LMU_CLASS_COLOURS.LMP2);
+    expect(driverClass(s, 1)?.CarClassShortName).toBe('LMGT3');
+    expect(driverClass(s, 1)?.CarClassColor).toBe(LMU_CLASS_COLOURS.LMGT3);
+    expect(driverClass(s, 2)?.CarClassShortName).toBe('LMGTE');
+    expect(driverClass(s, 2)?.CarClassColor).toBe(LMU_CLASS_COLOURS.LMGTE);
+  });
+
+  it('keeps an unknown class name rather than dropping it', () => {
+    const raw = fixture();
+    raw.drivers[0].className = 'Garage56';
+
+    const s = mapLmuSession(raw);
+
+    expect(driverClass(s, 0)?.CarClassShortName).toBe('Garage56');
+    expect(driverClass(s, 0)?.CarClassColor).toBe(0);
   });
 
   it('orders relative speed so the faster class compares greater', () => {

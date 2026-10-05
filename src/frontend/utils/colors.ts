@@ -1,4 +1,7 @@
-import { CLASS_COLOURS_FASTEST_FIRST } from '@irdashies/types';
+import {
+  CLASS_COLOURS_FASTEST_FIRST,
+  LMU_CLASS_COLOURS,
+} from '@irdashies/types';
 
 export interface TailwindStyles {
   driverIcon: string;
@@ -41,6 +44,16 @@ const COLOR_NAME_TO_HEX: Record<string, string> = {
   amber: '#f59e0b',
 };
 
+// LMU's class colours are exact values rather than Tailwind palette members,
+// so they are keyed straight to their own hex. Without this they would miss
+// the iRacing lookup above and every LMU class would render stone.
+const LMU_CLASS_COLOR_HEX: Record<number, string> = Object.fromEntries(
+  Object.values(LMU_CLASS_COLOURS).map((colour) => [
+    colour,
+    `#${colour.toString(16).padStart(6, '0')}`,
+  ])
+);
+
 export const getTailwindStyle = (
   color?: number,
   highlightColor?: number,
@@ -53,12 +66,55 @@ export const getTailwindStyle = (
     if (colorName) {
       hex = COLOR_NAME_TO_HEX[colorName];
     } else {
-      hex = `#78716c`; // Default to stone if no mapped color
+      hex = LMU_CLASS_COLOR_HEX[color] ?? '#78716c'; // stone if unmapped
     }
   } else if (highlightColor !== undefined) {
     hex = `#${highlightColor.toString(16).padStart(6, '0')}`;
   }
   const classColorMap: Record<string, TailwindStyles> = {
+    // Le Mans Ultimate class liveries. Exact values, so these use arbitrary
+    // Tailwind colours rather than palette names; the icon background is the
+    // same hue held back to 30% so the border still reads against it.
+    '#ff000a': {
+      // Hypercar
+      driverIcon: 'bg-[#ff000a]/30 border-[#ff000a]',
+      classHeader: 'bg-[#ff000a] border-[#ff000a]',
+      fill: 'fill-[#ff000a]',
+      canvasFill: '#ff000a',
+      borderColor: 'border-[#ff000a]',
+    },
+    '#0690ff': {
+      // LMP2
+      driverIcon: 'bg-[#0690ff]/30 border-[#0690ff]',
+      classHeader: 'bg-[#0690ff] border-[#0690ff]',
+      fill: 'fill-[#0690ff]',
+      canvasFill: '#0690ff',
+      borderColor: 'border-[#0690ff]',
+    },
+    '#763993': {
+      // LMP3
+      driverIcon: 'bg-[#763993]/30 border-[#763993]',
+      classHeader: 'bg-[#763993] border-[#763993]',
+      fill: 'fill-[#763993]',
+      canvasFill: '#763993',
+      borderColor: 'border-[#763993]',
+    },
+    '#00ff6a': {
+      // LMGT3
+      driverIcon: 'bg-[#00ff6a]/30 border-[#00ff6a]',
+      classHeader: 'bg-[#00ff6a] border-[#00ff6a]',
+      fill: 'fill-[#00ff6a]',
+      canvasFill: '#00ff6a',
+      borderColor: 'border-[#00ff6a]',
+    },
+    '#fff600': {
+      // LMGTE
+      driverIcon: 'bg-[#fff600]/30 border-[#fff600]',
+      classHeader: 'bg-[#fff600] border-[#fff600]',
+      fill: 'fill-[#fff600]',
+      canvasFill: '#fff600',
+      borderColor: 'border-[#fff600]',
+    },
     '#ffda59': {
       driverIcon: 'bg-yellow-800 border-yellow-500',
       classHeader: 'bg-yellow-500 border-yellow-500',
