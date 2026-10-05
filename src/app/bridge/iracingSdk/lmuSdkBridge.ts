@@ -24,11 +24,6 @@ import {
   resetLmuLapDistanceState,
 } from '../../lmu/lapDistance';
 import {
-  createLmuPitSpeedState,
-  resetLmuPitSpeedState,
-  updateLmuPitSpeedLimit,
-} from '../../lmu/pitSpeedLimit';
-import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
@@ -116,9 +111,6 @@ export async function publishLmuSDKEvents(
   // below -- never on the grace-hold path, where re-anchoring mid-lap would
   // drop the estimate back a few centimetres and silently cost a sample.
   const lapDistanceState = createLmuLapDistanceState();
-  // LMU publishes no pit speed limit, so it is measured from the car. See
-  // pitSpeedLimit.ts -- it is a converging estimate, not track data.
-  const pitSpeedState = createLmuPitSpeedState();
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -222,7 +214,6 @@ export async function publishLmuSDKEvents(
           tinyPedalTrackMapDirectories()
         );
         trackMap = loadedMap?.map ?? null;
-        resetLmuPitSpeedState(pitSpeedState);
         if (loadedMap?.source === 'tinyPedal') {
           try {
             mapStorage.save(activeTrackName, loadedMap.map);
@@ -242,9 +233,6 @@ export async function publishLmuSDKEvents(
         logger.info(
           `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
         );
-        logger.warn(
-          '[lmuSdkBridge] LMU does not expose a pit speed limit; the limit will remain hidden until calibrated from live limiter-capped speed'
-        );
       }
 
       if (!wasRunning) {
@@ -257,23 +245,6 @@ export async function publishLmuSDKEvents(
       }
 
       const tickTime = performance.now();
-      const playerInPits =
-        raw.playerVehicleIdx >= 0 && raw.vehInPits[raw.playerVehicleIdx] === 1;
-      const calibratedPitSpeed = updateLmuPitSpeedLimit(pitSpeedState, {
-        now: tickTime,
-        speedMs: raw.speed,
-        inPits: playerInPits,
-        limiterEngaged: Boolean(raw.speedLimiter),
-        throttle: raw.unfilteredThrottle,
-        brake: raw.unfilteredBrake,
-      });
-      if (calibratedPitSpeed !== undefined) {
-        // Forces the next session poll to republish with the new limit.
-        lastSessionSignature = null;
-        logger.info(
-          `[lmuSdkBridge] Measured pit speed limit at ${(calibratedPitSpeed * 3.6).toFixed(0)} kph from live LMU telemetry`
-        );
-      }
 
       let session: Session | null = null;
       if (rawSession) {
@@ -281,7 +252,7 @@ export async function publishLmuSDKEvents(
         const signature = lmuSessionSignature(rawSession);
         if (signature !== lastSessionSignature) {
           lastSessionSignature = signature;
-          session = mapLmuSession(rawSession, trackMap, pitSpeedState.limitMs);
+          session = mapLmuSession(rawSession, trackMap);
           const playerIdx = rawSession.playerVehicleIdx;
           logger.info(
             `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`

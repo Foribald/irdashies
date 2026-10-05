@@ -5,7 +5,22 @@ import type {
   LmuTrackMap,
 } from '@irdashies/types';
 
-import { classColourForRank, LMU_CLASS_COLOURS } from '@irdashies/types';
+import {
+  classColourForRank,
+  LMU_CLASS_COLOURS,
+  LMU_MANUFACTURERS,
+} from '@irdashies/types';
+
+/**
+ * LMU's pit and rolling-start speed limit, km/h.
+ *
+ * Fixed at 60 across every circuit. Unlike titles where the limit varies by
+ * track there is nothing to detect and nothing to look up, so this replaces an
+ * estimate measured off the car's own limited speed -- which had no better
+ * source available, but could only ever converge on the number written here,
+ * and read wrongly until it did.
+ */
+export const LMU_PIT_SPEED_LIMIT_KPH = 60;
 import { lapTimeOrAbsent } from './sentinels';
 
 type Raw = import('./native').LmuRawSession;
@@ -41,29 +56,9 @@ export function resolveLmuTrackId(trackName: string): number {
   return LMU_TRACK_ID_OFFSET + (hash >>> 0);
 }
 
-const LMU_MANUFACTURER_CAR_IDS: readonly [RegExp, number][] = [
-  [/\baston martin\b/i, 10001],
-  [/\baudi\b/i, 10002],
-  [/\bbmw\b/i, 10003],
-  [/\bcadillac\b/i, 10004],
-  [/\b(?:chevrolet|corvette)\b/i, 10005],
-  [/\bferrari\b/i, 10006],
-  [/\bford\b/i, 10007],
-  [/\blamborghini\b/i, 10008],
-  // LMP3 chassis maker. Must precede engine-supplier brands so a
-  // "Ligier JS P320 Nissan" style model never resolves to the engine badge.
-  [/\bligier\b/i, 10013],
-  [/\bmclaren\b/i, 10009],
-  [/\bmercedes(?:-amg)?\b/i, 10010],
-  [/\bporsche\b/i, 10011],
-  [/\btoyota\b/i, 10012],
-];
-
 export function resolveLmuCarId(vehicleModel: string): number {
   return (
-    LMU_MANUFACTURER_CAR_IDS.find(([pattern]) =>
-      pattern.test(vehicleModel)
-    )?.[1] ?? 0
+    LMU_MANUFACTURERS.find(({ pattern }) => pattern.test(vehicleModel))?.id ?? 0
   );
 }
 
@@ -197,8 +192,7 @@ function sessionType(session: number): string {
  */
 export function mapLmuSession(
   raw: Raw,
-  trackMap?: LmuTrackMap | null,
-  pitSpeedLimitMs?: number
+  trackMap?: LmuTrackMap | null
 ): Session {
   const trackLengthM = raw.lapDist;
   const shiftLights = deriveLmuShiftLightRpm(raw.engineMaxRPM);
@@ -328,10 +322,7 @@ export function mapLmuSession(
       TrackLongitude: '',
       TrackNorthOffset: '',
       TrackNumTurns: 0,
-      TrackPitSpeedLimit:
-        pitSpeedLimitMs !== undefined
-          ? `${(pitSpeedLimitMs * 3.6).toFixed(2)} kph`
-          : '',
+      TrackPitSpeedLimit: `${LMU_PIT_SPEED_LIMIT_KPH.toFixed(2)} kph`,
       TrackPaceSpeed: '0',
       TrackNumPitStalls: 0,
       TrackType: '',

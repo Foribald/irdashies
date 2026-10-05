@@ -20,11 +20,13 @@ describe('mapLmuSession', () => {
     expect(s.WeekendInfo.NumCarTypes).toBe(3);
   });
 
-  it('maps a calibrated live pit speed limit', () => {
-    expect(
-      mapLmuSession(fixture(), null, 80 / 3.6).WeekendInfo.TrackPitSpeedLimit
-    ).toBe('80.00 kph');
-    expect(mapLmuSession(fixture()).WeekendInfo.TrackPitSpeedLimit).toBe('');
+  it('reports the fixed 60 kph pit speed limit', () => {
+    // LMU hardcodes the pit and rolling-start limit to 60 km/h on every
+    // circuit, so this is a constant rather than something to measure or look
+    // up per track.
+    expect(mapLmuSession(fixture()).WeekendInfo.TrackPitSpeedLimit).toBe(
+      '60.00 kph'
+    );
   });
 
   it('maps driver info with the player flagged', () => {
