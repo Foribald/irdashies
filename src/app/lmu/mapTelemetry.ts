@@ -265,7 +265,11 @@ export function mapLmuTelemetry(
   t.SessionLapsTotal = num(hasLapLimit ? raw.maxLaps : TIMED_SESSION_LAPS);
   t.SessionTimeOfDay = num(raw.timeOfDay);
   t.SessionFlags = num(sessionFlags(raw));
-  t.DisplayUnits = num(0);
+  // Metric. iRacing carries the driver's own unit preference here and widgets
+  // resolve 'auto' from it; LMU's shared memory has no equivalent, and 0
+  // (imperial) meant every 'auto' widget showed mph for a sim whose own UI,
+  // pit limits and timing are all metric.
+  t.DisplayUnits = num(1);
   t.IsReplayPlaying = bool(false);
   t.ReplayFrameNum = num(0);
   t.ReplayFrameNumEnd = num(0);
