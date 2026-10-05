@@ -8,7 +8,20 @@ import {
   normalizeSimWidgetSupport,
   widgetDisabledMessage,
   widgetIncompatibleLabel,
+  type SimWidgetSupportConfig,
 } from './simWidgetSupport';
+
+/**
+ * A config that actually disables something.
+ *
+ * The shipped defaults disable nothing for any simulator, so they cannot
+ * demonstrate the lookup -- these specs are about the function, not about
+ * which widgets happen to be listed today.
+ */
+const configured: SimWidgetSupportConfig = {
+  message: DEFAULT_SIM_WIDGET_SUPPORT.message,
+  disabledWidgets: { iracing: [], lmu: ['blindspotmonitor'] },
+};
 
 const config = DEFAULT_SIM_WIDGET_SUPPORT;
 
@@ -41,14 +54,24 @@ describe('per-simulator widget support', () => {
   });
 
   it('disables a widget only under the sim that lists it', () => {
-    expect(isWidgetDisabledForSim(config, 'blindspotmonitor', 'lmu')).toBe(
+    expect(isWidgetDisabledForSim(configured, 'blindspotmonitor', 'lmu')).toBe(
       true
     );
-    expect(isWidgetDisabledForSim(config, 'blindspotmonitor', 'iracing')).toBe(
+    expect(
+      isWidgetDisabledForSim(configured, 'blindspotmonitor', 'iracing')
+    ).toBe(false);
+    expect(isWidgetDisabledForSim(configured, 'standings', 'lmu')).toBe(false);
+    expect(isWidgetDisabledForSim(configured, 'standings', 'iracing')).toBe(
       false
     );
-    expect(isWidgetDisabledForSim(config, 'standings', 'lmu')).toBe(false);
-    expect(isWidgetDisabledForSim(config, 'standings', 'iracing')).toBe(false);
+  });
+
+  it('ships with nothing disabled for either simulator', () => {
+    // The blind spot monitor was listed for LMU while its data was thought
+    // unavailable. It works, so nothing is hidden by default any more.
+    SIMULATOR_IDS.forEach((simulator) => {
+      expect(config.disabledWidgets[simulator]).toEqual([]);
+    });
   });
 
   it('disables nothing while no simulator is known', () => {
@@ -64,10 +87,10 @@ describe('per-simulator widget support', () => {
   });
 
   it('gives a message only for a widget that is actually disabled', () => {
-    expect(widgetDisabledMessage(config, 'blindspotmonitor', 'lmu')).toBe(
-      config.message
+    expect(widgetDisabledMessage(configured, 'blindspotmonitor', 'lmu')).toBe(
+      configured.message
     );
-    expect(widgetDisabledMessage(config, 'standings', 'lmu')).toBeNull();
+    expect(widgetDisabledMessage(configured, 'standings', 'lmu')).toBeNull();
   });
 
   it('names the sim in the toggle label', () => {
