@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 #include "lmu_struct.h"
+#include "lmu_source.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -34,6 +35,7 @@ private:
     void FillVehicleArrays(Napi::Object &out) const;
     void Unmap();
 
+    irdashies::lmu::LmuSource _source;
     LMUObjectOut _snapshot;
     bool _hasSnapshot;
     mutable std::map<std::string, int> _classIds;

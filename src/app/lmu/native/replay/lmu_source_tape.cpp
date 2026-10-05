@@ -7,6 +7,10 @@
 //   IRDASHIES_LMU_REPLAY        tape path
 //   IRDASHIES_LMU_REPLAY_SPEED  playback speed, 0.25 to 100
 //   IRDASHIES_LMU_REPLAY_LOOP   "1" to restart at the end
+//
+// The reader and its position are per-instance, which matters more here than
+// for shared memory: a tape has a read cursor, so two instances sharing one
+// would each consume frames the other expected to see.
 
 #include "../lmu_source.h"
 #include "lmu_tape.h"
@@ -26,17 +30,6 @@ using irdashies::lmu_replay::TapeRecordHeader;
 
 constexpr double kMinSpeed = 0.25;
 constexpr double kMaxSpeed = 100.0;
-
-std::unique_ptr<TapeReader> gReader;
-LMUObjectOut gPending{};
-bool gHasPending = false;
-/** Set by a Disconnect record, so the player reports the sim going away. */
-bool gDisconnected = false;
-bool gExhausted = false;
-double gSpeed = 1.0;
-bool gLoop = false;
-std::uint64_t gStartedAtMicros = 0;
-std::uint64_t gPendingAtMicros = 0;
 
 std::uint64_t nowMicros() {
   using namespace std::chrono;
@@ -59,58 +52,75 @@ std::string envOrEmpty(const char* name) {
 #endif
 }
 
-/** Reads the next snapshot record, skipping the bookkeeping ones. */
-bool advance() {
-  if (!gReader) return false;
-
-  while (true) {
-    TapeRecordHeader record{};
-    std::string error;
-    const auto result = gReader->readNext(record, gPending, error);
-
-    if (result == TapeReadResult::Error) {
-      gExhausted = true;
-      return false;
-    }
-    if (result == TapeReadResult::EndOfFile) {
-      if (!gLoop || !gReader->rewind(error)) {
-        gExhausted = true;
-        return false;
-      }
-      // A loop boundary is a disconnect: the app sees the session end and a
-      // new one begin, which is what a restarted recording actually is.
-      gStartedAtMicros = nowMicros();
-      gDisconnected = true;
-      return false;
-    }
-
-    const auto kind = static_cast<RecordKind>(record.kind);
-    if (kind == RecordKind::Disconnect) {
-      gDisconnected = true;
-      return false;
-    }
-    if (kind == RecordKind::End) {
-      if (!gLoop || !gReader->rewind(error)) {
-        gExhausted = true;
-        return false;
-      }
-      gStartedAtMicros = nowMicros();
-      gDisconnected = true;
-      return false;
-    }
-    if (kind == RecordKind::Keyframe || kind == RecordKind::Delta) {
-      gPendingAtMicros = record.elapsedMicros;
-      gHasPending = true;
-      return true;
-    }
-    // Any other kind is bookkeeping; keep reading.
-  }
-}
-
 }  // namespace
 
-bool sourceOpen() {
-  if (gReader) return true;
+struct LmuSource::Impl {
+  std::unique_ptr<TapeReader> reader;
+  LMUObjectOut pending{};
+  bool hasPending = false;
+  /** Set by a Disconnect record, so the player reports the sim going away. */
+  bool disconnected = false;
+  bool exhausted = false;
+  double speed = 1.0;
+  bool loop = false;
+  std::uint64_t startedAtMicros = 0;
+  std::uint64_t pendingAtMicros = 0;
+
+  /** Reads the next snapshot record, skipping the bookkeeping ones. */
+  bool advance() {
+    if (!reader) return false;
+
+    while (true) {
+      TapeRecordHeader record{};
+      std::string error;
+      const auto result = reader->readNext(record, pending, error);
+
+      if (result == TapeReadResult::Error) {
+        exhausted = true;
+        return false;
+      }
+      if (result == TapeReadResult::EndOfFile) {
+        if (!loop || !reader->rewind(error)) {
+          exhausted = true;
+          return false;
+        }
+        // A loop boundary is a disconnect: the app sees the session end and a
+        // new one begin, which is what a restarted recording actually is.
+        startedAtMicros = nowMicros();
+        disconnected = true;
+        return false;
+      }
+
+      const auto kind = static_cast<RecordKind>(record.kind);
+      if (kind == RecordKind::Disconnect) {
+        disconnected = true;
+        return false;
+      }
+      if (kind == RecordKind::End) {
+        if (!loop || !reader->rewind(error)) {
+          exhausted = true;
+          return false;
+        }
+        startedAtMicros = nowMicros();
+        disconnected = true;
+        return false;
+      }
+      if (kind == RecordKind::Keyframe || kind == RecordKind::Delta) {
+        pendingAtMicros = record.elapsedMicros;
+        hasPending = true;
+        return true;
+      }
+      // Any other kind is bookkeeping; keep reading.
+    }
+  }
+};
+
+LmuSource::LmuSource() : impl_(std::make_unique<Impl>()) {}
+
+LmuSource::~LmuSource() = default;
+
+bool LmuSource::open() {
+  if (impl_->reader) return true;
 
   const std::string path = envOrEmpty("IRDASHIES_LMU_REPLAY");
   if (path.empty()) return false;
@@ -122,53 +132,53 @@ bool sourceOpen() {
   const std::string speed = envOrEmpty("IRDASHIES_LMU_REPLAY_SPEED");
   if (!speed.empty()) {
     const double parsed = std::atof(speed.c_str());
-    if (parsed >= kMinSpeed && parsed <= kMaxSpeed) gSpeed = parsed;
+    if (parsed >= kMinSpeed && parsed <= kMaxSpeed) impl_->speed = parsed;
   }
-  gLoop = envOrEmpty("IRDASHIES_LMU_REPLAY_LOOP") == "1";
+  impl_->loop = envOrEmpty("IRDASHIES_LMU_REPLAY_LOOP") == "1";
 
-  gReader = std::move(reader);
-  gStartedAtMicros = nowMicros();
-  gHasPending = false;
-  gDisconnected = false;
-  gExhausted = false;
+  impl_->reader = std::move(reader);
+  impl_->startedAtMicros = nowMicros();
+  impl_->hasPending = false;
+  impl_->disconnected = false;
+  impl_->exhausted = false;
   return true;
 }
 
-void sourceClose() {
-  gReader.reset();
-  gHasPending = false;
-  gDisconnected = false;
-  gExhausted = false;
+void LmuSource::close() {
+  impl_->reader.reset();
+  impl_->hasPending = false;
+  impl_->disconnected = false;
+  impl_->exhausted = false;
 }
 
-bool sourceCapture(LMUObjectOut& out) {
-  if (!gReader || gExhausted) return false;
+bool LmuSource::capture(LMUObjectOut& out) {
+  if (!impl_->reader || impl_->exhausted) return false;
 
-  if (gDisconnected) {
+  if (impl_->disconnected) {
     // Reported once, then playback carries on with whatever follows.
-    gDisconnected = false;
+    impl_->disconnected = false;
     return false;
   }
 
-  if (!gHasPending && !advance()) return false;
+  if (!impl_->hasPending && !impl_->advance()) return false;
 
   // Hold the frame until its recorded moment comes round, so a tape plays at
   // the cadence it was captured at rather than as fast as it can be read.
-  const std::uint64_t elapsed = nowMicros() - gStartedAtMicros;
+  const std::uint64_t elapsed = nowMicros() - impl_->startedAtMicros;
   const auto due = static_cast<std::uint64_t>(
-      static_cast<double>(gPendingAtMicros) / gSpeed);
+      static_cast<double>(impl_->pendingAtMicros) / impl_->speed);
   if (elapsed < due) return false;
 
-  out = gPending;
-  gHasPending = false;
+  out = impl_->pending;
+  impl_->hasPending = false;
   return true;
 }
 
-bool sourceIsLive(const LMUObjectOut& snapshot) {
+bool LmuSource::isLive(const LMUObjectOut& snapshot) const {
   // The window the tape recorded is long gone, so the live check cannot apply.
   // A tape is live while it still has frames to give.
   (void)snapshot;
-  return gReader != nullptr && !gExhausted;
+  return impl_->reader != nullptr && !impl_->exhausted;
 }
 
 }  // namespace irdashies::lmu

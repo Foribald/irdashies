@@ -46,8 +46,9 @@ interface TapeSdk {
 }
 
 /**
- * Loads the addon fresh, because the tape source keeps its reader in module
- * state and reads the environment once when it opens.
+ * Builds one addon instance. Each owns its own tape reader, so instances are
+ * independent; the environment is read when `start()` opens that reader, which
+ * is why it is set here rather than once for the file.
  */
 const openTape = (tape: string, speed = '100', loop = '0'): TapeSdk => {
   process.env.IRDASHIES_LMU_REPLAY = tape;
@@ -171,5 +172,34 @@ describeIfBuilt('lmu_replay tape', () => {
 
     expect(session.trackName).toBe('Synthetic Circuit');
     expect((session.drivers as unknown[])?.length).toBe(2);
+  });
+  /**
+   * Auto-detection builds a probe to answer "is LMU running?" while the bridge
+   * builds its own reader once a sim is chosen, so two instances are routinely
+   * alive at once. While the source state was file-scope, releasing either one
+   * detached the other: the live addon lost its shared-memory view when V8
+   * collected the discarded probe, and the bridge reported LMU gone one
+   * disconnect grace period later.
+   */
+  it('keeps an instance attached when another one is released', () => {
+    const tape = tapeFor('isolation');
+    writeFixture(tape, 300);
+    // Looping, so the tape cannot run out and turn an exhausted reader into a
+    // false positive for the detachment this is actually checking.
+    const probe = openTape(tape, '100', '1');
+    const bridge = openTape(tape, '100', '1');
+    expect(probe.start()).toBe(true);
+    expect(bridge.start()).toBe(true);
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !bridge.read()?.running) {
+      /* wait for the first frame */
+    }
+    expect(bridge.read().running).toBe(true);
+
+    probe.stop();
+    expect(bridge.read().running).toBe(true);
+
+    bridge.stop();
   });
 });

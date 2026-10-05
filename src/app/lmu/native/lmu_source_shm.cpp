@@ -2,6 +2,9 @@
 //
 // Lifted out of lmu_node.cc so the replay build can link a tape-backed
 // implementation of the same seam against the identical conversion code.
+//
+// The handle and view are per-instance. See lmu_source.h for why that matters:
+// a probe and a bridge are routinely attached at the same time.
 
 #include "lmu_source.h"
 
@@ -17,77 +20,86 @@ namespace {
 
 const wchar_t* kSharedMemoryName = L"LMU_Data";
 
-HANDLE gMap = NULL;
-std::uint8_t* gView = nullptr;
-const LMUObjectOut* gMapped = nullptr;
-
-LMUSnapshotState liveState() {
-  return {
-      gMapped->generic.events.SME_UPDATE_SCORING,
-      gMapped->generic.events.SME_UPDATE_TELEMETRY,
-  };
-}
-
 }  // namespace
 
-bool sourceOpen() {
-  if (gMapped != nullptr) return true;
-  sourceClose();
+struct LmuSource::Impl {
+  HANDLE map = NULL;
+  std::uint8_t* view = nullptr;
+  const LMUObjectOut* mapped = nullptr;
 
-  gMap = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedMemoryName);
-  if (gMap == NULL) return false;
+  LMUSnapshotState liveState() const {
+    return {
+        mapped->generic.events.SME_UPDATE_SCORING,
+        mapped->generic.events.SME_UPDATE_TELEMETRY,
+    };
+  }
 
-  gView = static_cast<std::uint8_t*>(MapViewOfFile(gMap, FILE_MAP_READ, 0, 0, 0));
-  if (gView == NULL) {
-    CloseHandle(gMap);
-    gMap = NULL;
+  void release() {
+    mapped = nullptr;
+    if (view != nullptr) {
+      UnmapViewOfFile(view);
+      view = nullptr;
+    }
+    if (map != NULL) {
+      CloseHandle(map);
+      map = NULL;
+    }
+  }
+};
+
+LmuSource::LmuSource() : impl_(std::make_unique<Impl>()) {}
+
+LmuSource::~LmuSource() { impl_->release(); }
+
+bool LmuSource::open() {
+  if (impl_->mapped != nullptr) return true;
+  impl_->release();
+
+  impl_->map = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedMemoryName);
+  if (impl_->map == NULL) return false;
+
+  impl_->view = static_cast<std::uint8_t*>(
+      MapViewOfFile(impl_->map, FILE_MAP_READ, 0, 0, 0));
+  if (impl_->view == NULL) {
+    CloseHandle(impl_->map);
+    impl_->map = NULL;
     return false;
   }
 
   MEMORY_BASIC_INFORMATION region{};
-  if (VirtualQuery(gView, &region, sizeof(region)) == 0 ||
+  if (VirtualQuery(impl_->view, &region, sizeof(region)) == 0 ||
       region.RegionSize < sizeof(LMUObjectOut)) {
-    sourceClose();
+    impl_->release();
     return false;
   }
 
-  gMapped = reinterpret_cast<const LMUObjectOut*>(gView);
+  impl_->mapped = reinterpret_cast<const LMUObjectOut*>(impl_->view);
   return true;
 }
 
-void sourceClose() {
-  gMapped = nullptr;
-  if (gView != nullptr) {
-    UnmapViewOfFile(gView);
-    gView = nullptr;
-  }
-  if (gMap != NULL) {
-    CloseHandle(gMap);
-    gMap = NULL;
-  }
-}
+void LmuSource::close() { impl_->release(); }
 
-bool sourceCapture(LMUObjectOut& out) {
-  if (gMapped == nullptr) return false;
+bool LmuSource::capture(LMUObjectOut& out) {
+  if (impl_->mapped == nullptr) return false;
 
   for (int attempt = 0; attempt < 4; ++attempt) {
     // Cheap gate before the expensive part. The copy below is ~317 KB out of
     // a mapping the sim is actively writing, and an attempt that was going to
     // fail used to pay for it in full before anything was checked. Two
     // counter reads cost sixteen bytes and catch a writer mid-burst first.
-    const LMUSnapshotState before = liveState();
+    const LMUSnapshotState before = impl_->liveState();
     MemoryBarrier();
-    if (!IsQuietLmuWriter(before, liveState())) continue;
+    if (!IsQuietLmuWriter(before, impl_->liveState())) continue;
 
     MemoryBarrier();
     LMUObjectOut candidate;
-    std::memcpy(&candidate, gMapped, sizeof(candidate));
+    std::memcpy(&candidate, impl_->mapped, sizeof(candidate));
     MemoryBarrier();
     const LMUSnapshotState snapshot = {
         candidate.generic.events.SME_UPDATE_SCORING,
         candidate.generic.events.SME_UPDATE_TELEMETRY,
     };
-    const LMUSnapshotState after = liveState();
+    const LMUSnapshotState after = impl_->liveState();
 
     if (!IsCoherentLmuSnapshot(before, snapshot, after)) continue;
 
@@ -98,7 +110,7 @@ bool sourceCapture(LMUObjectOut& out) {
   return false;
 }
 
-bool sourceIsLive(const LMUObjectOut& snapshot) {
+bool LmuSource::isLive(const LMUObjectOut& snapshot) const {
   const auto window = reinterpret_cast<HWND>(
       static_cast<uintptr_t>(snapshot.generic.appInfo.mAppWindow));
   return window != NULL && ::IsWindow(window);

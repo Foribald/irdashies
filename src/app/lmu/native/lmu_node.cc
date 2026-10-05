@@ -67,7 +67,7 @@ Napi::Value LmuSdkNode::Start(const Napi::CallbackInfo &info)
 
   Unmap();
 
-  if (!irdashies::lmu::sourceOpen())
+  if (!_source.open())
     return Napi::Boolean::New(env, false);
 
   CaptureSnapshot();
@@ -78,7 +78,7 @@ Napi::Value LmuSdkNode::Start(const Napi::CallbackInfo &info)
 void LmuSdkNode::Unmap()
 {
   _hasSnapshot = false;
-  irdashies::lmu::sourceClose();
+  _source.close();
   _classIds.clear();
 }
 
@@ -99,14 +99,14 @@ bool LmuSdkNode::IsLive() const
   if (!_hasSnapshot || _snapshot.generic.gameVersion <= 0)
     return false;
 
-  return irdashies::lmu::sourceIsLive(_snapshot);
+  return _source.isLive(_snapshot);
 }
 
 bool LmuSdkNode::CaptureSnapshot()
 {
   // Coherence, retries and the live-window check belong to whichever source
   // this build linked; see lmu_source.h.
-  if (!irdashies::lmu::sourceCapture(_snapshot))
+  if (!_source.capture(_snapshot))
     return false;
 
   _hasSnapshot = true;
