@@ -24,6 +24,11 @@ import {
   resetLmuLapDistanceState,
 } from '../../lmu/lapDistance';
 import {
+  createLmuPitSpeedState,
+  resetLmuPitSpeedState,
+  updateLmuPitSpeedLimit,
+} from '../../lmu/pitSpeedLimit';
+import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
@@ -111,8 +116,9 @@ export async function publishLmuSDKEvents(
   // below -- never on the grace-hold path, where re-anchoring mid-lap would
   // drop the estimate back a few centimetres and silently cost a sample.
   const lapDistanceState = createLmuLapDistanceState();
-  let pitSpeedLimitMs: number | undefined;
-  let lastPitCalibrationSpeed: number | undefined;
+  // LMU publishes no pit speed limit, so it is measured from the car. See
+  // pitSpeedLimit.ts -- it is a converging estimate, not track data.
+  const pitSpeedState = createLmuPitSpeedState();
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -216,8 +222,7 @@ export async function publishLmuSDKEvents(
           tinyPedalTrackMapDirectories()
         );
         trackMap = loadedMap?.map ?? null;
-        pitSpeedLimitMs = undefined;
-        lastPitCalibrationSpeed = undefined;
+        resetLmuPitSpeedState(pitSpeedState);
         if (loadedMap?.source === 'tinyPedal') {
           try {
             mapStorage.save(activeTrackName, loadedMap.map);
@@ -254,31 +259,20 @@ export async function publishLmuSDKEvents(
       const tickTime = performance.now();
       const playerInPits =
         raw.playerVehicleIdx >= 0 && raw.vehInPits[raw.playerVehicleIdx] === 1;
-      const calibrationSpeed = raw.speed;
-      const canCalibratePitSpeed =
-        pitSpeedLimitMs === undefined &&
-        playerInPits &&
-        Boolean(raw.speedLimiter) &&
-        (raw.unfilteredThrottle ?? 0) > 0.95 &&
-        (raw.unfilteredBrake ?? 1) < 0.01 &&
-        calibrationSpeed !== undefined &&
-        Number.isFinite(calibrationSpeed) &&
-        calibrationSpeed > 1;
-      if (canCalibratePitSpeed) {
-        const speedDelta =
-          lastPitCalibrationSpeed === undefined
-            ? Number.POSITIVE_INFINITY
-            : calibrationSpeed - lastPitCalibrationSpeed;
-        if (speedDelta >= 0 && speedDelta < 0.1) {
-          pitSpeedLimitMs = Math.round(calibrationSpeed * 3.6) / 3.6;
-          lastSessionSignature = null;
-          logger.info(
-            `[lmuSdkBridge] Calibrated pit speed limit at ${(pitSpeedLimitMs * 3.6).toFixed(0)} kph from live LMU telemetry`
-          );
-        }
-        lastPitCalibrationSpeed = calibrationSpeed;
-      } else {
-        lastPitCalibrationSpeed = undefined;
+      const calibratedPitSpeed = updateLmuPitSpeedLimit(pitSpeedState, {
+        now: tickTime,
+        speedMs: raw.speed,
+        inPits: playerInPits,
+        limiterEngaged: Boolean(raw.speedLimiter),
+        throttle: raw.unfilteredThrottle,
+        brake: raw.unfilteredBrake,
+      });
+      if (calibratedPitSpeed !== undefined) {
+        // Forces the next session poll to republish with the new limit.
+        lastSessionSignature = null;
+        logger.info(
+          `[lmuSdkBridge] Measured pit speed limit at ${(calibratedPitSpeed * 3.6).toFixed(0)} kph from live LMU telemetry`
+        );
       }
 
       let session: Session | null = null;
@@ -287,7 +281,7 @@ export async function publishLmuSDKEvents(
         const signature = lmuSessionSignature(rawSession);
         if (signature !== lastSessionSignature) {
           lastSessionSignature = signature;
-          session = mapLmuSession(rawSession, trackMap, pitSpeedLimitMs);
+          session = mapLmuSession(rawSession, trackMap, pitSpeedState.limitMs);
           const playerIdx = rawSession.playerVehicleIdx;
           logger.info(
             `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
