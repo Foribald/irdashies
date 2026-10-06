@@ -1,5 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -23,6 +26,7 @@ const addonPath = path.join(release, 'lmu_tape_node.node');
 const built = fs.existsSync(exePath) && fs.existsSync(addonPath);
 
 const describeIfBuilt = built ? describe : describe.skip;
+const execFileAsync = promisify(execFile);
 
 let workDir: string | undefined;
 const tapeFor = (name: string) => {
@@ -208,5 +212,137 @@ describeIfBuilt('lmu_replay tape', () => {
     expect(bridge.read().running).toBe(true);
 
     bridge.stop();
+  });
+});
+
+describeIfBuilt('lmu_replay live REST capture', () => {
+  /**
+   * Records against a stub standing in for LMU's REST API.
+   *
+   * On an ephemeral port via --rest-port, so this never contends for 6397 and
+   * never depends on the sim being installed. Shared memory is absent, so the
+   * tape is REST records only -- which is exactly the half under test.
+   */
+  const withStubApi = async (
+    handler: http.RequestListener,
+    args: string[]
+  ): Promise<string> => {
+    // execFile, not execFileSync: the stub runs in this process, and a
+    // synchronous child would block the event loop so the server could never
+    // accept the recorder's connections. Every request would time out and the
+    // tape would come back empty for the wrong reason.
+    const server = http.createServer(handler);
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve)
+    );
+    const { port } = server.address() as AddressInfo;
+    const tape = tapeFor(`live-${port}`);
+    try {
+      await execFileAsync(
+        exePath,
+        [
+          'record',
+          '--output',
+          tape,
+          '--duration',
+          '1',
+          '--rest-host',
+          '127.0.0.1',
+          '--rest-port',
+          String(port),
+          '--rest-interval',
+          '50',
+          ...args,
+        ],
+        { encoding: 'utf8', timeout: 30_000 }
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    return tape;
+  };
+
+  const json =
+    (body: unknown): http.RequestListener =>
+    (_, res) => {
+      const text = JSON.stringify(body);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(text),
+      });
+      res.end(text);
+    };
+
+  it('records REST responses alongside shared memory', async () => {
+    const tape = await withStubApi(json({ total: 30, damage: 12 }), []);
+
+    const report = execFileSync(exePath, ['inspect', '--input', tape], {
+      encoding: 'utf8',
+    });
+
+    expect(report).toMatch(/REST records: *[1-9]/);
+    expect(report).toContain('/rest/strategy/pitstop-estimate');
+  });
+
+  it('stores a changed body but not an unchanged one', async () => {
+    // At a 50 ms poll over four paths most responses repeat, and storing them
+    // all would bloat a tape for nothing.
+    let tick = 0;
+    const changing = await withStubApi((req, res) => {
+      tick += 1;
+      const text = JSON.stringify(
+        req.url === '/rest/strategy/pitstop-estimate'
+          ? { total: 30 + tick }
+          : { total: 30 }
+      );
+      res.writeHead(200, { 'Content-Length': Buffer.byteLength(text) });
+      res.end(text);
+    }, []);
+
+    const report = execFileSync(exePath, ['inspect', '--input', changing], {
+      encoding: 'utf8',
+    });
+    const count = Number(/REST records: *(\d+)/.exec(report)?.[1] ?? 0);
+
+    // The changing path contributes many; the three static ones contribute
+    // one apiece rather than one per poll.
+    expect(count).toBeGreaterThan(3);
+    expect(count).toBeLessThan(60);
+  });
+
+  it('records nothing from REST with --no-rest', async () => {
+    const tape = await withStubApi(json({ total: 30 }), ['--no-rest']);
+
+    const report = execFileSync(exePath, ['inspect', '--input', tape], {
+      encoding: 'utf8',
+    });
+
+    expect(report).toMatch(/REST records: *0 /);
+  });
+
+  it('finishes the tape even though nothing answers the port', async () => {
+    // The capture thread used to outlive the loop on a --duration exit, so
+    // join blocked and the tape was never finished -- a zero-byte file.
+    const tape = tapeFor('no-api');
+    execFileSync(
+      exePath,
+      [
+        'record',
+        '--output',
+        tape,
+        '--duration',
+        '1',
+        '--rest-port',
+        // Nothing listening here.
+        '6399',
+      ],
+      { encoding: 'utf8', timeout: 30_000 }
+    );
+
+    expect(fs.statSync(tape).size).toBeGreaterThan(0);
+    const report = execFileSync(exePath, ['inspect', '--input', tape], {
+      encoding: 'utf8',
+    });
+    expect(report).toMatch(/REST records: *0 /);
   });
 });

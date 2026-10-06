@@ -134,10 +134,27 @@ exercises the real path rather than a shortcut around it. A path the recording
 never covered reports as pending for the whole run, which is the honest answer:
 it was never captured.
 
-**Live recording does not capture REST yet.** `lmu_replay.exe record` reads only
-shared memory; the synthetic `fixture` command emits REST records, which is what
-the format and the replay path are tested against. Recording them from a live
-session needs an HTTP client in the recorder, which it does not have.
+`record` captures them from a live session. The recorder polls the API on its
+own thread — the capture loop runs every 10 ms and a loopback connect that
+fails can take far longer than that, so polling inline would cost frames — and
+queues a record only when a body actually changes. Only the main thread ever
+writes to the tape, so the queue is the whole of the shared state.
+
+```powershell
+npm run lmu:record -- --output telemetry-captures\session.lmudt
+npm run lmu:record -- --output telemetry-captures\session.lmudt --no-rest
+```
+
+`--rest-interval <ms>` sets the poll cadence (default 200), `--rest-host` and
+`--rest-port` point it elsewhere, and `--no-rest` records shared memory alone.
+If nothing is serving the port — an older LMU has no REST API — it says so once
+and records shared memory only, rather than retrying four paths a second for
+the whole session.
+
+The paths polled are listed in `lmu_replay_main.cpp` and must stay in step with
+`LMU_REST_TASKS` in [`src/app/lmu/rest/tasks.ts`](../src/app/lmu/rest/tasks.ts),
+which is what the app actually reads. A path recorded but unread is harmless; a
+path read but never recorded replays as pending forever.
 
 ## Compatibility
 

@@ -14,9 +14,12 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef NOMINMAX
@@ -24,10 +27,12 @@
 #endif
 #include <windows.h>
 
+#include "lmu_rest_http.h"
 #include "lmu_tape.h"
 
 namespace {
 
+using irdashies::lmu_replay::HttpResult;
 using irdashies::lmu_replay::RecordKind;
 using irdashies::lmu_replay::TapeReader;
 using irdashies::lmu_replay::TapeReadResult;
@@ -61,6 +66,10 @@ struct Options {
   double durationSeconds = 0.0;
   std::uint32_t pollMillis = 10;
   std::uint32_t frames = 240;
+  /** REST poll cadence while recording; 0 disables REST capture entirely. */
+  std::uint32_t restIntervalMillis = 200;
+  std::string restHost = "127.0.0.1";
+  std::uint16_t restPort = 6397;
 };
 
 bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
@@ -81,6 +90,15 @@ bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
       options.pollMillis = static_cast<std::uint32_t>(std::atoi(argv[++i]));
     } else if (arg == "--frames" && hasNext) {
       options.frames = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+    } else if (arg == "--rest-interval" && hasNext) {
+      options.restIntervalMillis =
+          static_cast<std::uint32_t>(std::atoi(argv[++i]));
+    } else if (arg == "--rest-host" && hasNext) {
+      options.restHost = argv[++i];
+    } else if (arg == "--rest-port" && hasNext) {
+      options.restPort = static_cast<std::uint16_t>(std::atoi(argv[++i]));
+    } else if (arg == "--no-rest") {
+      options.restIntervalMillis = 0;
     } else {
       error = "Unrecognised argument: " + arg;
       return false;
@@ -93,6 +111,96 @@ bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
   }
   if (options.pollMillis == 0) options.pollMillis = 1;
   return true;
+}
+
+/**
+ * Paths polled while recording.
+ *
+ * Must stay in step with LMU_REST_TASKS in src/app/lmu/rest/tasks.ts, which is
+ * the source of truth for what the app reads. A path recorded but unread is
+ * harmless; a path read but never recorded replays as pending forever, which
+ * is why this list errs towards recording everything.
+ */
+const char* kRestPaths[] = {
+    "/rest/strategy/pitstop-estimate",
+    "/rest/garage/UIScreen/RepairAndRefuel",
+    "/rest/sessions",
+    "/rest/sessions/weather",
+};
+
+struct PendingRest {
+  std::string path;
+  std::string body;
+  std::uint64_t elapsedMicros;
+};
+
+/**
+ * REST responses captured but not yet written.
+ *
+ * Polled on its own thread for one reason: the capture loop runs every 10 ms
+ * and a loopback connect that fails can take a second, which would cost ~100
+ * frames of the recording. Only the main thread ever touches the TapeWriter,
+ * so the queue is the whole of the shared state and the writer needs no lock.
+ */
+std::mutex gRestMutex;
+std::vector<PendingRest> gRestQueue;
+
+/**
+ * Fetches each path until stopped, queueing a record only when a body changes.
+ *
+ * Unchanged bodies are dropped here rather than written and deduplicated
+ * later: at a 200 ms poll over a four-path set, most responses are identical
+ * to the one before, and storing them all would bloat a tape for nothing.
+ */
+void restCaptureLoop(
+    const std::string& host,
+    std::uint16_t port,
+    int intervalMs,
+    int timeoutMs,
+    std::uint64_t startedAt) {
+  std::string startupError;
+  if (!irdashies::lmu_replay::httpStartup(startupError)) {
+    std::cerr << "REST capture disabled: " << startupError << "\n";
+    return;
+  }
+
+  std::map<std::string, std::string> lastBody;
+  bool announced = false;
+  bool absent = false;
+
+  while (!gStopRequested && !absent) {
+    for (const char* path : kRestPaths) {
+      if (gStopRequested) break;
+      std::string body;
+      const HttpResult result =
+          irdashies::lmu_replay::httpGet(host, port, path, timeoutMs, body);
+
+      if (result == HttpResult::Refused) {
+        // Nothing is serving the API. An older LMU has none, so stop asking
+        // rather than retry four paths a second for the whole session.
+        std::cout << "No REST API on " << host << ":" << port
+                  << "; recording shared memory only.\n";
+        absent = true;
+        break;
+      }
+      if (result != HttpResult::Ok) continue;
+
+      auto& previous = lastBody[path];
+      if (previous == body) continue;
+      previous = body;
+
+      if (!announced) {
+        announced = true;
+        std::cout << "REST API found; recording its responses too.\n";
+      }
+      std::lock_guard<std::mutex> guard(gRestMutex);
+      gRestQueue.push_back({path, body, nowMicros() - startedAt});
+    }
+    if (absent || gStopRequested) break;
+    Sleep(static_cast<DWORD>(intervalMs));
+  }
+
+  irdashies::lmu_replay::httpShutdown();
 }
 
 /**
@@ -139,6 +247,23 @@ int runRecord(const Options& options) {
   LMUObjectOut snapshot{};
   std::uint64_t frames = 0;
 
+  // On its own thread: see restCaptureLoop. Disabled with --no-rest, which is
+  // the way to record a tape deliberately without them.
+  std::thread restThread;
+  if (options.restIntervalMillis > 0) {
+    restThread = std::thread(
+        restCaptureLoop,
+        options.restHost,
+        options.restPort,
+        static_cast<int>(options.restIntervalMillis),
+        // A loopback reply that takes this long means trouble, and the thread
+        // must not sit on a dead socket while a session is being recorded.
+        500,
+        startedAt);
+  }
+
+  std::uint64_t restRecords = 0;
+
   while (!gStopRequested) {
     if (options.durationSeconds > 0.0) {
       const double elapsed =
@@ -182,7 +307,47 @@ int runRecord(const Options& options) {
       std::cout << "LMU went away; waiting again.\n";
     }
 
+    // Drained here so only this thread writes to the tape. A REST record
+    // between snapshots is exactly where the player expects to find one.
+    {
+      std::vector<PendingRest> pending;
+      {
+        std::lock_guard<std::mutex> guard(gRestMutex);
+        pending.swap(gRestQueue);
+      }
+      for (const auto& entry : pending) {
+        if (!writer.appendRest(
+                entry.path, entry.body, entry.elapsedMicros, error)) {
+          std::cerr << error << "\n";
+          gStopRequested = true;
+          break;
+        }
+        ++restRecords;
+      }
+    }
+
     Sleep(options.pollMillis);
+  }
+
+  // The loop also exits on --duration and on a write failure, neither of which
+  // sets this. Without it the capture thread keeps polling and the join below
+  // never returns, so the tape is never finished and the file stays empty.
+  gStopRequested = true;
+  if (restThread.joinable()) restThread.join();
+
+  // Whatever the thread queued after the last drain.
+  {
+    std::vector<PendingRest> pending;
+    {
+      std::lock_guard<std::mutex> guard(gRestMutex);
+      pending.swap(gRestQueue);
+    }
+    for (const auto& entry : pending) {
+      if (writer.appendRest(
+              entry.path, entry.body, entry.elapsedMicros, error)) {
+        ++restRecords;
+      }
+    }
   }
 
   if (view != nullptr) UnmapViewOfFile(view);
@@ -194,6 +359,9 @@ int runRecord(const Options& options) {
   }
   std::cout << "\nWrote " << writer.recordCount() << " records to "
             << options.path << "\n";
+  if (options.restIntervalMillis > 0) {
+    std::cout << "  including " << restRecords << " REST records\n";
+  }
   return 0;
 }
 

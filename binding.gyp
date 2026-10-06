@@ -117,8 +117,14 @@
                             "src/app/lmu/native/replay/lmu_replay_main.cpp",
                             "src/app/lmu/native/replay/lmu_tape.cpp",
                             "src/app/lmu/native/replay/lmu_tape.h",
+                            "src/app/lmu/native/replay/lmu_rest_http.cpp",
+                            "src/app/lmu/native/replay/lmu_rest_http.h",
                             "src/app/lmu/native/lmu_struct.h",
-                        ]
+                        ],
+                        # Winsock, for recording LMU's REST API alongside
+                        # shared memory. Only this target needs it: the app
+                        # reaches the same API from JS via node:http.
+                        "libraries": ["-lws2_32"],
                     },
                 ]
             ],
