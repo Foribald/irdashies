@@ -485,3 +485,116 @@ describe('mapLmuSession fuel capacity', () => {
     expect(mapLmuSession(raw).DriverInfo.DriverCarFuelMaxLtr).toBe(0);
   });
 });
+
+describe('mapLmuSession results positions', () => {
+  const resultsOf = (raw: ReturnType<typeof fixture>) =>
+    mapLmuSession(raw).SessionInfo.Sessions[0].ResultsPositions ?? [];
+
+  const withDrivers = (
+    edits: { bestLapTime?: number; place?: number; classId?: number }[]
+  ) => {
+    const raw = fixture();
+    raw.drivers = raw.drivers.map((d, i) => ({ ...d, ...edits[i] }));
+    return raw;
+  };
+
+  it('orders a practice session by best lap time', () => {
+    // The standings widget builds its rows from these, not from the per-car
+    // telemetry channels -- leaving them null is what left it in car-number
+    // order for a whole session.
+    const raw = withDrivers([
+      { bestLapTime: 95.5 },
+      { bestLapTime: 93.2 },
+      { bestLapTime: 97.1 },
+    ]);
+
+    expect(resultsOf(raw).map((r) => r.CarIdx)).toEqual([
+      raw.drivers[1].id,
+      raw.drivers[0].id,
+      raw.drivers[2].id,
+    ]);
+  });
+
+  it('reorders when a driver improves', () => {
+    const slow = resultsOf(
+      withDrivers([
+        { bestLapTime: 95.5 },
+        { bestLapTime: 93.2 },
+        { bestLapTime: 97.1 },
+      ])
+    );
+    const improved = resultsOf(
+      withDrivers([
+        { bestLapTime: 92.0 },
+        { bestLapTime: 93.2 },
+        { bestLapTime: 97.1 },
+      ])
+    );
+
+    expect(slow[0].CarIdx).not.toBe(improved[0].CarIdx);
+    expect(improved[0].Position).toBe(1);
+  });
+
+  it('leaves a driver with no time out of the results entirely', () => {
+    // createDriverStandings keeps them visible at the bottom in car-number
+    // order, which is the right place for a car that has not run.
+    const raw = withDrivers([
+      { bestLapTime: 95.5 },
+      { bestLapTime: 0 },
+      { bestLapTime: 97.1 },
+    ]);
+
+    const carIdxs = resultsOf(raw).map((r) => r.CarIdx);
+    expect(carIdxs).toHaveLength(2);
+    expect(carIdxs).not.toContain(raw.drivers[1].id);
+  });
+
+  it('orders a race by the running order the sim reports', () => {
+    // Not by best lap: mPlace already accounts for laps completed.
+    const raw = withDrivers([
+      { place: 3, bestLapTime: 90 },
+      { place: 1, bestLapTime: 99 },
+      { place: 2, bestLapTime: 95 },
+    ]);
+    raw.session = 10;
+
+    expect(resultsOf(raw).map((r) => r.CarIdx)).toEqual([
+      raw.drivers[1].id,
+      raw.drivers[2].id,
+      raw.drivers[0].id,
+    ]);
+  });
+
+  it('keeps a lapless car in a race, where it still has a position', () => {
+    const raw = withDrivers([
+      { place: 1, bestLapTime: 0 },
+      { place: 2, bestLapTime: 0 },
+      { place: 3, bestLapTime: 0 },
+    ]);
+    raw.session = 10;
+
+    expect(resultsOf(raw)).toHaveLength(3);
+  });
+
+  it('numbers positions from one and class positions from zero', () => {
+    // The consumer adds one to ClassPosition; publishing it one-based made
+    // every class start at 2.
+    const raw = withDrivers([
+      { bestLapTime: 95.5, classId: 0 },
+      { bestLapTime: 93.2, classId: 0 },
+      { bestLapTime: 97.1, classId: 1 },
+    ]);
+
+    const results = resultsOf(raw);
+    expect(results.map((r) => r.Position)).toEqual([1, 2, 3]);
+    // Two in class 0 ranked 0 and 1; the single class 1 car ranked 0.
+    expect(results.map((r) => r.ClassPosition)).toEqual([0, 1, 0]);
+  });
+
+  it('carries the lap times the standings fall back on', () => {
+    const raw = withDrivers([{ bestLapTime: 95.5 }, {}, {}]);
+
+    const row = resultsOf(raw).find((r) => r.CarIdx === raw.drivers[0].id);
+    expect(row?.FastestTime).toBeCloseTo(95.5, 3);
+  });
+});

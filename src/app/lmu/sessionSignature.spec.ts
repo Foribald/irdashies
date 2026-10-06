@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LmuRawSession } from './native';
 import { lmuSessionSignature } from './sessionSignature';
+import { fixture } from './rawSessionFixture';
 
 const session = (playerVehicleIdx: number, playerHasVehicle: boolean) =>
   ({
@@ -39,5 +40,33 @@ describe('lmuSessionSignature', () => {
     Object.assign(after.drivers[0], { [field]: value });
 
     expect(lmuSessionSignature(before)).not.toBe(lmuSessionSignature(after));
+  });
+});
+
+describe('lmuSessionSignature running order', () => {
+  it('changes when a driver changes place', () => {
+    // Without this an overtake moved nothing the signature could see, so the
+    // standings held their old order until somebody completed a lap.
+    const before = fixture();
+    const after = {
+      ...before,
+      drivers: before.drivers.map((d, i) =>
+        i === 0 ? { ...d, place: d.place + 1 } : d
+      ),
+    };
+
+    expect(lmuSessionSignature(after)).not.toBe(lmuSessionSignature(before));
+  });
+
+  it('changes when a driver sets a better lap', () => {
+    const before = fixture();
+    const after = {
+      ...before,
+      drivers: before.drivers.map((d, i) =>
+        i === 0 ? { ...d, bestLapTime: 1 } : d
+      ),
+    };
+
+    expect(lmuSessionSignature(after)).not.toBe(lmuSessionSignature(before));
   });
 });

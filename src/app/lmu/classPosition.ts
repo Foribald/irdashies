@@ -23,6 +23,46 @@
  * conflating them is what made every class start at 2.
  */
 
+/**
+ * How far down the order a car sits, lower being ahead.
+ *
+ * A race is already ordered by the sim, so its own place stands. Anything else
+ * is a timesheet, where best lap decides it and a car yet to set a time
+ * belongs at the bottom rather than the top -- which a plain ascending sort on
+ * 0 or -1 gets backwards.
+ *
+ * Exported because two places need this same answer: the per-car telemetry
+ * channels here, and the session results the standings widget orders on. Two
+ * orderings drifting apart would have the two widgets disagreeing about who is
+ * ahead.
+ */
+export const lmuOrderingKey = (
+  isRace: boolean,
+  place: number | undefined,
+  bestLapTime: number | undefined
+): number => {
+  const value = isRace ? (place ?? 0) : (bestLapTime ?? 0);
+  return value > 0 ? value : Number.POSITIVE_INFINITY;
+};
+
+/**
+ * Compares two ordering keys, falling back to a stable tiebreak.
+ *
+ * Compared rather than subtracted: a car with no time carries an infinite key,
+ * and `Infinity - 95` is itself infinite rather than a usable delta. Ties --
+ * notably every car yet to set a time -- settle on the tiebreak so the order
+ * does not reshuffle between frames.
+ */
+export const compareLmuOrder = (
+  keyA: number,
+  keyB: number,
+  tiebreakA: number,
+  tiebreakB: number
+): number => {
+  if (keyA !== keyB) return keyA < keyB ? -1 : 1;
+  return tiebreakA - tiebreakB;
+};
+
 export interface LmuClassPositionState {
   /** In-class positions by car slot, 0 where unknown. Reused across frames. */
   positions: number[];
@@ -135,27 +175,12 @@ export function updateLmuClassPositions(
     order.push(carIdx);
   }
 
-  // A race is already ordered by the sim; otherwise it is a timesheet, and a
-  // car yet to set a time belongs at the bottom of it rather than the top.
-  const keyOf = (carIdx: number): number => {
-    if (isRace) {
-      const place = places?.[carIdx] ?? 0;
-      return place > 0 ? place : Number.POSITIVE_INFINITY;
-    }
-    const best = bestLapTimes?.[carIdx] ?? 0;
-    return best > 0 ? best : Number.POSITIVE_INFINITY;
-  };
+  const keyOf = (carIdx: number): number =>
+    lmuOrderingKey(isRace, places?.[carIdx], bestLapTimes?.[carIdx]);
 
-  order.sort((a, b) => {
-    const keyA = keyOf(a);
-    const keyB = keyOf(b);
-    // Compared, not subtracted: a car with no time carries an infinite key,
-    // and `Infinity - 95` is itself infinite rather than a usable delta.
-    if (keyA !== keyB) return keyA < keyB ? -1 : 1;
-    // A genuine tie -- every car yet to set a time -- settles on slot order,
-    // so the column does not reshuffle between frames.
-    return a - b;
-  });
+  // Slot order is the tiebreak here, so the column does not reshuffle between
+  // frames while nobody has set a time.
+  order.sort((a, b) => compareLmuOrder(keyOf(a), keyOf(b), a, b));
 
   const rankByClass = new Map<number, number>();
   order.forEach((carIdx, index) => {

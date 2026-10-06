@@ -11,6 +11,7 @@ import {
   LMU_MANUFACTURERS,
 } from '@irdashies/types';
 import { fnv1a32 } from './hash';
+import { compareLmuOrder, lmuOrderingKey } from './classPosition';
 import type { LmuRestSession } from '@irdashies/types';
 
 /**
@@ -253,6 +254,61 @@ function resolveLmuFuelCapacityLtr(
   return raw.fuelCapacity ?? 0;
 }
 
+/**
+ * The running order, as the standings widget consumes it.
+ *
+ * It builds its rows from ResultsPositions, not from the per-car telemetry
+ * channels, so leaving this null left every driver falling through to
+ * createDriverStandings' "not yet in results" tail -- which orders by car
+ * number and never changes. That was the standings sitting in car-number order
+ * for a whole practice session.
+ *
+ * Non-race sessions list only drivers who have set a time, which is what
+ * iRacing does and what the consumer already expects: a car yet to run belongs
+ * in that car-number tail rather than being ranked above someone who has.
+ *
+ * Ordering comes from lmuOrderingKey, shared with the telemetry channels, so
+ * the standings and the relative cannot disagree about who is ahead.
+ */
+function buildLmuResults(raw: Raw, isRace: boolean): SessionResults[] {
+  const contenders = raw.drivers.filter(
+    (d) => isRace || (d.bestLapTime ?? 0) > 0
+  );
+
+  const ordered = [...contenders].sort((a, b) =>
+    compareLmuOrder(
+      lmuOrderingKey(isRace, a.place, a.bestLapTime),
+      lmuOrderingKey(isRace, b.place, b.bestLapTime),
+      a.id,
+      b.id
+    )
+  );
+
+  const classRank = new Map<number, number>();
+  return ordered.map((d, idx) => {
+    const rank = (classRank.get(d.classId) ?? 0) + 1;
+    classRank.set(d.classId, rank);
+    return {
+      Position: idx + 1,
+      // Zero-based; the standings add one. See the note on the qualifying grid.
+      ClassPosition: rank - 1,
+      CarIdx: d.id,
+      Lap: d.totalLaps,
+      Time: 0,
+      FastestLap: 0,
+      FastestTime: lapTimeOrAbsent(d.bestLapTime),
+      LastTime: lapTimeOrAbsent(d.lastLapTime),
+      LapsLed: 0,
+      LapsComplete: d.totalLaps,
+      JokerLapsComplete: 0,
+      LapsDriven: d.totalLaps,
+      Incidents: 0,
+      ReasonOutId: 0,
+      ReasonOutStr: '',
+    };
+  });
+}
+
 export function mapLmuSession(
   raw: Raw,
   trackMap?: LmuTrackMap | null,
@@ -488,7 +544,7 @@ export function mapLmuSession(
           SessionSubType: null,
           SessionSkipped: 0,
           SessionRunGroupsUsed: 0,
-          ResultsPositions: null,
+          ResultsPositions: buildLmuResults(raw, isLmuRaceSession(raw.session)),
           ResultsFastestLap: [],
           QualifyPositions: qualiResults.map((q) => ({
             Position: q.Position,

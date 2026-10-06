@@ -28,6 +28,11 @@ export const lmuSessionSignature = (session: LmuRawSession): string =>
       vehFilename: driver.vehFilename,
       classId: driver.classId,
       qualification: driver.qualification,
+      // The running order in a race. Without it an overtake changed nothing
+      // the signature could see, so the standings held their old order until
+      // somebody happened to complete a lap. Places move rarely, so the extra
+      // republishes this allows are few.
+      place: driver.place,
       bestLapTime: driver.bestLapTime,
       lastLapTime: driver.lastLapTime,
       totalLaps: driver.totalLaps,
