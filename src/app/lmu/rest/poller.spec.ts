@@ -432,3 +432,80 @@ describe('createLmuRestPoller', () => {
     expect(applySpy).not.toHaveBeenCalled();
   });
 });
+
+describe('createLmuRestPoller with a pending source', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    parseSpy.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps retrying a pending path without spending a retry', async () => {
+    // What a tape does early in playback: the path is real, the record has
+    // simply not gone by yet. Three of these must not latch the task off.
+    const { transport, calls } = makeTransport(() => ({
+      ok: false,
+      reason: 'pending' as const,
+    }));
+    const poller = createLmuRestPoller({
+      data: createLmuRestData(),
+      transport,
+      tasks: [repeatTask],
+    });
+
+    poller.setActive(true);
+    await advance(0);
+    for (let i = 0; i < 10; i++) await advance(BASE_MS);
+
+    // Still asking, well past the retry limit.
+    expect(calls.length).toBeGreaterThan(REST_RETRY_LIMIT + 5);
+  });
+
+  it('retries a pending path at the base interval, not a backed-off one', async () => {
+    const { transport, calls } = makeTransport(() => ({
+      ok: false,
+      reason: 'pending' as const,
+    }));
+    const poller = createLmuRestPoller({
+      data: createLmuRestData(),
+      transport,
+      tasks: [repeatTask],
+    });
+
+    poller.setActive(true);
+    await advance(0);
+    const first = calls.length;
+
+    await advance(BASE_MS);
+    expect(calls).toHaveLength(first + 1);
+    await advance(BASE_MS);
+    expect(calls).toHaveLength(first + 2);
+  });
+
+  it('starts serving as soon as the tape produces a body', async () => {
+    let body: string | null = null;
+    const { transport } = makeTransport(() =>
+      body === null
+        ? { ok: false, reason: 'pending' as const }
+        : { ok: true, body }
+    );
+    const data = createLmuRestData();
+    const poller = createLmuRestPoller({
+      data,
+      transport,
+      tasks: [repeatTask],
+    });
+
+    poller.setActive(true);
+    await advance(0);
+    expect(data.cells.pitStopTime).toBeUndefined();
+
+    body = '{"total":41}';
+    await advance(BASE_MS);
+
+    expect(data.cells.pitStopTime?.value[0]).toBe(41);
+  });
+});

@@ -34,7 +34,20 @@ import { resetLmuRestData, type LmuRestData } from './state';
  * session costs one failed connect rather than one per task per interval.
  */
 
-export type LmuRestFailure = 'refused' | 'timeout' | 'status' | 'network';
+export type LmuRestFailure =
+  | 'refused'
+  | 'timeout'
+  | 'status'
+  | 'network'
+  /**
+   * Nothing to serve yet, and that is not a fault.
+   *
+   * A tape's REST records are interleaved with its snapshots, so early in
+   * playback a path legitimately has no body yet. Counting that as a failure
+   * would latch the task off three seconds into every replay. Retried at the
+   * base interval, indefinitely, without consuming a retry.
+   */
+  | 'pending';
 
 export type LmuRestResponse =
   | { readonly ok: true; readonly body: string }
@@ -171,6 +184,13 @@ export function createLmuRestPoller({
     if (stopped || !active) return;
 
     if (!response.ok) {
+      // Not an error: the source has nothing for this path yet. Try again at
+      // the base rate without spending a retry.
+      if (response.reason === 'pending') {
+        schedule(task, task.baseIntervalMs);
+        return;
+      }
+
       // Nothing has ever answered and the port refused: the API is not there.
       if (response.reason === 'refused' && state.hash === undefined) {
         absent = true;

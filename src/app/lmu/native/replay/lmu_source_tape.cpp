@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <memory>
+#include <map>
 #include <string>
 
 namespace irdashies::lmu {
@@ -65,6 +66,14 @@ struct LmuSource::Impl {
   bool loop = false;
   std::uint64_t startedAtMicros = 0;
   std::uint64_t pendingAtMicros = 0;
+  /**
+   * Latest recorded body per REST path.
+   *
+   * A tape's REST records are interleaved with its snapshots, so the app sees
+   * whatever had most recently been served at that point in the recording --
+   * which is what the live poller would have been holding too.
+   */
+  std::map<std::string, std::string> restBodies;
 
   /** Reads the next snapshot record, skipping the bookkeeping ones. */
   bool advance() {
@@ -73,7 +82,10 @@ struct LmuSource::Impl {
     while (true) {
       TapeRecordHeader record{};
       std::string error;
-      const auto result = reader->readNext(record, pending, error);
+      std::string restPath;
+      std::string restBody;
+      const auto result =
+          reader->readNext(record, pending, restPath, restBody, error);
 
       if (result == TapeReadResult::Error) {
         exhausted = true;
@@ -109,6 +121,10 @@ struct LmuSource::Impl {
         pendingAtMicros = record.elapsedMicros;
         hasPending = true;
         return true;
+      }
+      if (kind == RecordKind::Rest) {
+        restBodies[restPath] = restBody;
+        continue;
       }
       // Any other kind is bookkeeping; keep reading.
     }
@@ -171,6 +187,13 @@ bool LmuSource::capture(LMUObjectOut& out) {
 
   out = impl_->pending;
   impl_->hasPending = false;
+  return true;
+}
+
+bool LmuSource::restBody(const std::string& path, std::string& out) const {
+  const auto found = impl_->restBodies.find(path);
+  if (found == impl_->restBodies.end()) return false;
+  out = found->second;
   return true;
 }
 

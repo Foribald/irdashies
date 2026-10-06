@@ -2,6 +2,7 @@
 #define IRDASHIES_LMU_SOURCE_H
 
 #include <memory>
+#include <string>
 
 #include "lmu_struct.h"
 
@@ -64,6 +65,17 @@ class LmuSource {
    * itself.
    */
   bool isLive(const LMUObjectOut& snapshot) const;
+
+  /**
+   * The most recently served body for a REST path, when the source has one.
+   *
+   * Part of the seam because only a tape does. LMU's local REST API carries
+   * things shared memory does not, and the live build reaches it over HTTP
+   * from the JS side -- so the shared-memory implementation returns false and
+   * the tape serves what it recorded, which is what lets a recording
+   * reproduce a REST-dependent session.
+   */
+  bool restBody(const std::string& path, std::string& out) const;
 
  private:
   struct Impl;

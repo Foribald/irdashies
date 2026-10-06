@@ -37,6 +37,7 @@ Napi::Object LmuSdkNode::Init(Napi::Env env, Napi::Object exports)
     InstanceMethod("isRunning", &LmuSdkNode::IsRunning),
     InstanceMethod("read", &LmuSdkNode::Read),
     InstanceMethod("readSession", &LmuSdkNode::ReadSession),
+    InstanceMethod("readRest", &LmuSdkNode::ReadRest),
   });
 
   Napi::FunctionReference *constructor = new Napi::FunctionReference();
@@ -86,6 +87,27 @@ Napi::Value LmuSdkNode::Stop(const Napi::CallbackInfo &info)
 {
   Unmap();
   return Napi::Boolean::New(info.Env(), true);
+}
+
+/**
+ * The most recent recorded REST body for a path, or null.
+ *
+ * Only a tape has these. The live build returns null for everything, because
+ * it reaches LMU's REST API over HTTP from the JS side; the tape build serves
+ * what it recorded, which is what lets a recording reproduce a session whose
+ * behaviour depended on it. See lmu_source.h.
+ */
+Napi::Value LmuSdkNode::ReadRest(const Napi::CallbackInfo &info)
+{
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsString())
+    return env.Null();
+
+  const std::string path = info[0].As<Napi::String>().Utf8Value();
+  std::string body;
+  if (!_source.restBody(path, body))
+    return env.Null();
+  return Napi::String::New(env, body);
 }
 
 Napi::Value LmuSdkNode::IsRunning(const Napi::CallbackInfo &info)

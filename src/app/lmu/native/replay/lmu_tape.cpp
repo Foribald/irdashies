@@ -206,6 +206,36 @@ bool TapeWriter::appendDisconnect(
   return appendRecord(RecordKind::Disconnect, elapsedMicros, empty, error);
 }
 
+bool TapeWriter::appendRest(
+    const std::string& path,
+    const std::string& body,
+    std::uint64_t elapsedMicros,
+    std::string& error) {
+  if (path.empty()) {
+    error = "A REST record needs a path";
+    return false;
+  }
+
+  TapeRestPayloadHeader restHeader{};
+  restHeader.pathSize = static_cast<std::uint32_t>(path.size());
+  restHeader.bodySize = static_cast<std::uint32_t>(body.size());
+
+  // Verbatim, not run-length encoded: see RecordKind::Rest.
+  std::vector<std::uint8_t> payload(
+      sizeof(restHeader) + path.size() + body.size());
+  std::memcpy(payload.data(), &restHeader, sizeof(restHeader));
+  std::memcpy(payload.data() + sizeof(restHeader), path.data(), path.size());
+  std::memcpy(
+      payload.data() + sizeof(restHeader) + path.size(),
+      body.data(),
+      body.size());
+
+  // Deliberately leaves hasPrevious_ and sinceKeyframe_ alone: a REST record
+  // sits between snapshots and must not break the delta chain running through
+  // them.
+  return appendRecord(RecordKind::Rest, elapsedMicros, payload, error);
+}
+
 bool TapeWriter::finish(std::string& error) {
   if (finished_) return true;
   const std::vector<std::uint8_t> empty;
@@ -266,6 +296,8 @@ bool TapeReader::open(const std::filesystem::path& path, std::string& error) {
 TapeReadResult TapeReader::readNext(
     TapeRecordHeader& record,
     LMUObjectOut& snapshot,
+    std::string& restPath,
+    std::string& restBody,
     std::string& error) {
   stream_.read(reinterpret_cast<char*>(&record), sizeof(record));
   if (stream_.eof()) return TapeReadResult::EndOfFile;
@@ -322,6 +354,23 @@ TapeReadResult TapeReader::readNext(
     xorInto(current_.data(), delta.data(), kSnapshotSize, current_.data());
   } else if (kind == RecordKind::Disconnect) {
     hasCurrent_ = false;
+  } else if (kind == RecordKind::Rest) {
+    TapeRestPayloadHeader restHeader{};
+    if (scratch_.size() < sizeof(restHeader)) {
+      error = "Tape REST record is too short for its header";
+      return TapeReadResult::Error;
+    }
+    std::memcpy(&restHeader, scratch_.data(), sizeof(restHeader));
+    const std::size_t expected =
+        sizeof(restHeader) + restHeader.pathSize + restHeader.bodySize;
+    if (expected != scratch_.size()) {
+      error = "Tape REST record size does not match its header";
+      return TapeReadResult::Error;
+    }
+    const char* cursor =
+        reinterpret_cast<const char*>(scratch_.data()) + sizeof(restHeader);
+    restPath.assign(cursor, restHeader.pathSize);
+    restBody.assign(cursor + restHeader.pathSize, restHeader.bodySize);
   }
 
   if (hasCurrent_) {

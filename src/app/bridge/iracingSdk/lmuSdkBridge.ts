@@ -32,6 +32,7 @@ import { lmuRestOrigin } from '../../lmu/rest/constants';
 import { createLmuRestTransport } from '../../lmu/rest/httpJson';
 import { createLmuRestPoller } from '../../lmu/rest/poller';
 import { createLmuRestData } from '../../lmu/rest/state';
+import { createLmuTapeRestTransport } from '../../lmu/rest/tapeTransport';
 import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
@@ -93,9 +94,16 @@ export async function publishLmuSDKEvents(
   // lmu/rest/poller.ts for why that separation is structural rather than a
   // matter of discipline.
   const restData = createLmuRestData();
+  // A tape carries its own recorded REST responses, so a replay must read them
+  // rather than hit a port the sim is not serving. Everything above the
+  // transport is identical either way, which is the point of injecting it:
+  // a replay exercises the real poller, not a shortcut around it.
+  const restTransport = process.env.IRDASHIES_LMU_REPLAY
+    ? createLmuTapeRestTransport(sdk)
+    : createLmuRestTransport(lmuRestOrigin());
   const restPoller = createLmuRestPoller({
     data: restData,
-    transport: createLmuRestTransport(lmuRestOrigin()),
+    transport: restTransport,
     logger: {
       info: (message) => logger.info(message),
       warn: (message) => logger.warn(message),

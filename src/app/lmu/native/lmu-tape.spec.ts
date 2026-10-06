@@ -90,10 +90,17 @@ describeIfBuilt('lmu_replay tape', () => {
     });
 
     expect(report).toContain('Snapshot size:   324820 bytes');
-    expect(report).toMatch(/Records: *301/);
+    // 300 snapshots, the End record, and the REST responses the fixture
+    // interleaves -- the count is not just the frame count.
+    expect(report).toMatch(/Records: *30[0-9]/);
     // One keyframe at the start, then one per interval.
     expect(report).toMatch(/Keyframes: *[1-9]/);
     expect(report).toMatch(/Deltas: *[1-9]/);
+    // REST responses ride in the same tape, and the inspector names the paths
+    // so a recording can be checked for what it actually captured.
+    expect(report).toMatch(/REST records: *[1-9]/);
+    expect(report).toContain('/rest/strategy/pitstop-estimate');
+    expect(report).toContain('/rest/garage/UIScreen/RepairAndRefuel');
   });
 
   it('refuses a file that is not a tape', () => {

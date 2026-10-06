@@ -14,6 +14,8 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -216,11 +218,17 @@ int runInspect(const Options& options) {
   std::uint64_t keyframes = 0;
   std::uint64_t deltas = 0;
   std::uint64_t disconnects = 0;
+  std::uint64_t restRecords = 0;
+  std::uint64_t restBytes = 0;
+  std::set<std::string> restPaths;
   std::uint64_t payloadBytes = 0;
   TapeRecordHeader record{};
   LMUObjectOut snapshot{};
+  std::string restPath;
+  std::string restBody;
   while (true) {
-    const auto result = reader.readNext(record, snapshot, error);
+    const auto result =
+        reader.readNext(record, snapshot, restPath, restBody, error);
     if (result == TapeReadResult::EndOfFile) break;
     if (result == TapeReadResult::Error) {
       std::cerr << error << "\n";
@@ -231,6 +239,11 @@ int runInspect(const Options& options) {
       case RecordKind::Keyframe: ++keyframes; break;
       case RecordKind::Delta: ++deltas; break;
       case RecordKind::Disconnect: ++disconnects; break;
+      case RecordKind::Rest:
+        ++restRecords;
+        restBytes += record.payloadSize;
+        restPaths.insert(restPath);
+        break;
       default: break;
     }
   }
@@ -239,7 +252,12 @@ int runInspect(const Options& options) {
   std::cout << "Keyframes:       " << keyframes << "\n"
             << "Deltas:          " << deltas << "\n"
             << "Disconnects:     " << disconnects << "\n"
+            << "REST records:    " << restRecords << " (" << restBytes
+            << " bytes, " << restPaths.size() << " paths)\n"
             << "Payload bytes:   " << payloadBytes << "\n";
+  for (const auto& path : restPaths) {
+    std::cout << "  REST path:     " << path << "\n";
+  }
   if (snapshots > 0) {
     const double raw =
         static_cast<double>(snapshots) * static_cast<double>(sizeof(LMUObjectOut));
@@ -310,6 +328,36 @@ int runFixture(const Options& options) {
             error)) {
       std::cerr << error << "\n";
       return 1;
+    }
+
+    // Synthetic REST responses, so a fixture exercises the whole tape format
+    // and not only its snapshots. Written on the first frame and then about
+    // once a second, which is roughly how often a real body changes once the
+    // poller's backoff has settled.
+    if (frame == 0 || frame % 100 == 99) {
+      const auto elapsed = static_cast<std::uint64_t>(seconds * 1'000'000.0);
+      std::ostringstream pit;
+      pit << "{\"total\":" << (32.0 + std::sin(seconds))
+          << ",\"damage\":" << (12.0 + std::cos(seconds)) << "}";
+      if (!writer.appendRest(
+              "/rest/strategy/pitstop-estimate", pit.str(), elapsed, error)) {
+        std::cerr << error << "\n";
+        return 1;
+      }
+
+      std::ostringstream refuel;
+      refuel << "{\"fuelInfo\":{\"maxVirtualEnergy\":100},"
+             << "\"wearables\":{\"body\":{\"aero\":0.1},"
+             << "\"brakes\":[1,1,1,1],\"suspension\":[1,1,1,1]},"
+             << "\"pitMenu\":{\"pitMenu\":[{\"name\":\"FUEL:\","
+             << "\"currentSetting\":0,\"settings\":[{\"text\":\"+"
+             << (30.0 + static_cast<double>(frame) * 0.01) << " L\"}]}]}}";
+      if (!writer.appendRest(
+              "/rest/garage/UIScreen/RepairAndRefuel", refuel.str(), elapsed,
+              error)) {
+        std::cerr << error << "\n";
+        return 1;
+      }
     }
   }
 

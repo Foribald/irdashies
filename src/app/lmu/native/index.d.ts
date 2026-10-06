@@ -194,4 +194,11 @@ export class NativeLmu {
   isRunning(): boolean;
   read(): LmuRawTelemetry;
   readSession(): LmuRawSession;
+  /**
+   * The latest recorded REST body for a path, or null.
+   *
+   * Only the replay build has anything: the live build reads LMU's REST API
+   * over HTTP from the JS side and returns null for everything here.
+   */
+  readRest(path: string): string | null;
 }

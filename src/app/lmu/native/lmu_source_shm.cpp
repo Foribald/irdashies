@@ -110,6 +110,14 @@ bool LmuSource::capture(LMUObjectOut& out) {
   return false;
 }
 
+bool LmuSource::restBody(const std::string& path, std::string& out) const {
+  // Shared memory carries no REST responses; the live build reaches the API
+  // over HTTP from the JS side instead. Only a tape has anything here.
+  (void)path;
+  (void)out;
+  return false;
+}
+
 bool LmuSource::isLive(const LMUObjectOut& snapshot) const {
   const auto window = reinterpret_cast<HWND>(
       static_cast<uintptr_t>(snapshot.generic.appInfo.mAppWindow));

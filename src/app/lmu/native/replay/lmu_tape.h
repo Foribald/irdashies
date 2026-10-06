@@ -11,7 +11,12 @@
 
 namespace irdashies::lmu_replay {
 
-constexpr std::uint32_t kTapeFormatVersion = 1;
+/**
+ * 2 added REST records. Version 1 tapes are refused rather than played
+ * without them: no tape exists outside a scratch directory, so there is
+ * nothing to migrate and a silent half-replay would be worse than a refusal.
+ */
+constexpr std::uint32_t kTapeFormatVersion = 2;
 constexpr std::uint32_t kEndianMarker = 0x01020304;
 
 /**
@@ -31,6 +36,20 @@ enum class RecordKind : std::uint32_t {
   /** The sim went away; the player republishes this as a disconnect. */
   Disconnect = 3,
   End = 4,
+  /**
+   * A response from LMU's local REST API: the path it came from and the body
+   * as served.
+   *
+   * Shared memory does not carry these -- pit-stop estimates, the pit menu's
+   * refuel target, virtual-energy capacity, wear, the weather forecast -- so a
+   * tape without them cannot reproduce anything that depends on them.
+   *
+   * Stored verbatim rather than run-length encoded. These are a few KB of
+   * JSON, written only when the body actually changes, so the run encoding
+   * that makes a 324,820-byte snapshot viable would cost more than it saves
+   * here.
+   */
+  Rest = 5,
 };
 
 #pragma pack(push, 1)
@@ -59,10 +78,19 @@ struct TapeRecordHeader {
   std::uint32_t payloadChecksum;
   std::uint32_t reserved;
 };
+
+/** Prefixes a Rest record's payload: the path, then the body, both raw. */
+struct TapeRestPayloadHeader {
+  std::uint32_t pathSize;
+  std::uint32_t bodySize;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(TapeFileHeader) == 80, "TapeFileHeader layout changed");
 static_assert(sizeof(TapeRecordHeader) == 32, "TapeRecordHeader layout changed");
+static_assert(
+    sizeof(TapeRestPayloadHeader) == 8,
+    "TapeRestPayloadHeader layout changed");
 
 std::uint32_t checksum(const void* data, std::size_t size);
 
@@ -109,6 +137,16 @@ class TapeWriter {
 
   bool appendDisconnect(std::uint64_t elapsedMicros, std::string& error);
 
+  /**
+   * Appends a REST response. The caller decides when a body is worth storing;
+   * this writes whatever it is given.
+   */
+  bool appendRest(
+      const std::string& path,
+      const std::string& body,
+      std::uint64_t elapsedMicros,
+      std::string& error);
+
   bool finish(std::string& error);
 
   std::uint64_t recordCount() const { return header_.recordCount; }
@@ -141,11 +179,17 @@ class TapeReader {
 
   /**
    * Reads the next record, resolving a delta against the running snapshot.
-   * `snapshot` is only meaningful for Keyframe and Delta records.
+   *
+   * `snapshot` is only meaningful for Keyframe and Delta records, and
+   * `restPath`/`restBody` only for a Rest record. Both are left untouched for
+   * the kinds they do not apply to, so a caller can ignore whichever it does
+   * not care about.
    */
   TapeReadResult readNext(
       TapeRecordHeader& record,
       LMUObjectOut& snapshot,
+      std::string& restPath,
+      std::string& restBody,
       std::string& error);
 
   bool rewind(std::string& error);

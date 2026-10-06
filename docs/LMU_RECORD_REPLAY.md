@@ -73,7 +73,8 @@ npm run lmu:inspect -- --input telemetry-captures\session.lmudt
 ```
 
 Reports the record counts, duration, and the compression achieved against raw
-snapshots. It decodes every record, so it also verifies the checksums.
+snapshots. It also names every REST path the tape captured, which is how you
+check a recording actually covers what you wanted to reproduce. It decodes every record, so it also verifies the checksums.
 
 ## Replay through the application
 
@@ -114,9 +115,38 @@ a real session recorded on a machine running LMU. Record one and commit it, or
 keep it out of the repository and pass `--input` explicitly. The iRacing
 equivalent is 348 MB, so weigh that before committing one.
 
+## REST API values
+
+LMU serves things over a local REST API that its shared-memory block does not
+carry — pit-stop and repair estimates, the pit menu's refuel target,
+virtual-energy capacity, component wear, the weather forecast. A tape that held
+only shared memory could not reproduce anything depending on them, so the format
+carries them too, as `Rest` records interleaved with the snapshots.
+
+They are stored verbatim rather than run-length encoded: a few KB of JSON
+written only when the body changes, where the run encoding that makes a
+324,820-byte snapshot viable would cost more than it saves.
+
+On playback, the replay addon serves them back through `readRest(path)`, and the
+bridge points the REST poller at the tape instead of at the network. The poller
+itself is unchanged — same hashing, same backoff, same parsers — so a replay
+exercises the real path rather than a shortcut around it. A path the recording
+never covered reports as pending for the whole run, which is the honest answer:
+it was never captured.
+
+**Live recording does not capture REST yet.** `lmu_replay.exe record` reads only
+shared memory; the synthetic `fixture` command emits REST records, which is what
+the format and the replay path are tested against. Recording them from a live
+session needs an HTTP client in the recorder, which it does not have.
+
 ## Compatibility
 
 A tape stores the struct verbatim, so it records `sizeof(LMUObjectOut)` in its
 header and the reader refuses a tape whose size disagrees. If `lmu_struct.h`
 changes, old tapes stop loading rather than being silently misread — the bytes
 would no longer mean what this build reads them as.
+
+The format version is **2**, which added REST records. Version 1 tapes are
+refused rather than played without them: none existed outside a scratch
+directory, so there was nothing to migrate, and a silent half-replay would be
+worse than a refusal.

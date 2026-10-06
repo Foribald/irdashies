@@ -25,6 +25,7 @@ private:
     Napi::Value IsRunning(const Napi::CallbackInfo &info);
     Napi::Value Read(const Napi::CallbackInfo &info);
     Napi::Value ReadSession(const Napi::CallbackInfo &info);
+    Napi::Value ReadRest(const Napi::CallbackInfo &info);
 
     int GetClassId(const char *className) const;
     const LMUVehicleTelemetry *GetPlayerTelemetry() const;
