@@ -135,11 +135,16 @@ describe('mapLmuSession', () => {
   });
 
   it('builds qualifying results with per-class ranking', () => {
+    // ClassPosition is zero-based and Position is one-based, which is the
+    // contract iRacing's own results carry -- its recorded sessions show
+    // ClassPosition [0, 1, 0, ...] against Position [1, 2, 3, ...]. The
+    // standings add one when they read it, so publishing a one-based
+    // ClassPosition here started every class at 2.
     const s = mapLmuSession(fixture());
     const qualy = s.QualifyResultsInfo?.Results ?? [];
     expect(qualy.map((r) => [r.CarIdx, r.Position, r.ClassPosition])).toEqual([
-      [1, 1, 1],
-      [0, 2, 2],
+      [1, 1, 0],
+      [0, 2, 1],
     ]);
   });
 

@@ -285,7 +285,12 @@ export function mapLmuSession(
     classRank.set(classKey, classPos);
     return {
       Position: idx + 1,
-      ClassPosition: classPos,
+      // Zero-based, which is the contract iRacing sets: its own results carry
+      // ClassPosition [0, 1, 0, ...] alongside Position [1, 2, 3, ...], and
+      // the standings add one when they read it. Publishing a 1-based value
+      // here had that increment applied to a number that already counted
+      // from one, so every class began at 2.
+      ClassPosition: classPos - 1,
       CarIdx: d.id,
       Lap: 0,
       Time: 0,

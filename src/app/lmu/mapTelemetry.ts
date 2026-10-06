@@ -17,6 +17,10 @@ import {
   type LmuOpponentLapDistanceState,
 } from './opponentLapDistance';
 import { isLmuRaceSession } from './mapSession';
+import {
+  createLmuClassPositionState,
+  updateLmuClassPositions,
+} from './classPosition';
 
 type Raw = import('./native').LmuRawTelemetry;
 
@@ -112,6 +116,13 @@ const lapDistPctArr = (v: ArrayLike<number> | undefined) => ({
  * -- each pass rotating and taking an atan2 per car. It now runs once.
  */
 const relativePositionsBuffer = createLmuRelativePositionsBuffer();
+
+/**
+ * Class-position state, held across frames so the ranking is only recomputed
+ * when a place or a best lap actually moves rather than on all 64 frames a
+ * second. See classPosition.ts.
+ */
+const classPositionState = createLmuClassPositionState();
 
 export function mapLmuCarLeftRight(raw: Raw): CarLeftRight | null {
   return (
@@ -357,7 +368,18 @@ export function mapLmuTelemetry(
   };
   t.CarIdxOnPitRoad = boolArr(raw.vehInPits, (v) => v === 1);
   t.CarIdxPosition = numArr(raw.vehPlaces);
-  t.CarIdxClassPosition = numArr(undefined);
+  // LMU publishes mPlace but nothing per class, and the standings read class
+  // position. Left empty it fell through to the qualifying grid, which in
+  // practice is entry order and never changes.
+  t.CarIdxClassPosition = numArr(
+    updateLmuClassPositions(classPositionState, {
+      classes: raw.vehClass,
+      places: raw.vehPlaces,
+      bestLapTimes: raw.vehBestLapTime,
+      lapDistPcts: raw.vehLapDistPct,
+      isRace: isLmuRaceSession(raw.session),
+    })
+  );
   t.CarIdxClass = occupiedArr(raw.vehClass, raw, -1);
   t.CarIdxF2Time = numArr(raw.vehTimeBehindLeader);
   t.CarIdxEstTime = numArr(raw.vehTimeIntoLap);
