@@ -81,6 +81,7 @@ const commonSessionProperties = [
   { path: 'LmuRest.maxVirtualEnergy', label: 'LMU Max Virtual Energy' },
   { path: 'LmuRest.privateQualifying', label: 'LMU Private Qualifying' },
   { path: 'LmuRest.fuelRatio', label: 'LMU Fuel Ratio (L per % VE)' },
+  { path: 'LmuRest.fuelLevelMax', label: 'LMU Fuel Slider Max (L)' },
 ];
 
 export const TelemetryInspectorSettings = () => {

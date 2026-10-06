@@ -422,3 +422,31 @@ describe('car-setup-overview task', () => {
     });
   });
 });
+
+describe('car-setup-overview fuel slider maximum', () => {
+  it('reads maxValue, which is the LMGTE tank in litres', () => {
+    const { data } = apply('car-setup-overview', carSetupOverviewFixture());
+
+    expect(data.session.fuelLevelMax).toBe(120);
+  });
+
+  it('keeps it distinct from the ratio', () => {
+    // Two numbers from one node, meaning different things: 0.83 L per percent
+    // and a 120 L bound. Crossing them over is wrong by about a hundred times.
+    const { data } = apply('car-setup-overview', carSetupOverviewFixture());
+
+    expect(data.session.fuelRatio).toBeCloseTo(0.83, 5);
+    expect(data.session.fuelLevelMax).toBe(120);
+  });
+
+  it('applies nothing when maxValue is absent', () => {
+    const payload = {
+      carSetup: { garageValues: { VM_FUEL_LEVEL: { stringValue: '0.83' } } },
+    };
+
+    const { data } = apply('car-setup-overview', payload);
+
+    expect(data.session.fuelRatio).toBeCloseTo(0.83, 5);
+    expect(data.session.fuelLevelMax).toBeUndefined();
+  });
+});

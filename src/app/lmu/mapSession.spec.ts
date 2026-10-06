@@ -412,58 +412,75 @@ describe('mapLmuSession REST session values', () => {
 });
 
 describe('mapLmuSession fuel capacity', () => {
-  /** The fixture's player is the LMGT3 car; see rawSessionFixture. */
-  const playerClassOf = (raw: ReturnType<typeof fixture>) =>
-    raw.drivers.find((d) => d.isPlayer)?.className;
-
-  it('derives an LMGT3 tank from the fuel ratio, not mFuelCapacity', () => {
-    // 0.83 L per percent of virtual energy is 83 L at a full 100%.
-    const raw = { ...fixture(), fuelCapacity: 100 };
-    expect(playerClassOf(raw)).toBe('GT3');
-
-    const s = mapLmuSession(raw, null, { fuelRatio: 0.83 });
-
-    expect(s.DriverInfo.DriverCarFuelMaxLtr).toBeCloseTo(83, 5);
-  });
-
-  it('leaves other classes on the capacity LMU reports', () => {
-    // mFuelCapacity is confirmed correct for LMP2, so the override is scoped
-    // rather than applied to everything.
+  const asClass = (className: string) => {
     const raw = { ...fixture(), fuelCapacity: 100 };
     raw.drivers = raw.drivers.map((d) =>
-      d.isPlayer ? { ...d, className: 'LMP2_ELMS' } : d
+      d.isPlayer ? { ...d, className } : d
     );
+    return raw;
+  };
 
-    const s = mapLmuSession(raw, null, { fuelRatio: 0.83 });
+  const capacityOf = (
+    className: string,
+    rest?: { fuelRatio?: number; fuelLevelMax?: number }
+  ) =>
+    mapLmuSession(asClass(className), null, rest).DriverInfo
+      .DriverCarFuelMaxLtr;
 
-    expect(s.DriverInfo.DriverCarFuelMaxLtr).toBe(100);
+  it('derives Hypercar and LMGT3 from the fuel ratio', () => {
+    // 0.83 L per percent of virtual energy is 83 L at a full 100%.
+    expect(capacityOf('Hyper', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
+    expect(capacityOf('GT3', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
   });
 
-  it('falls back for LMGT3 when no ratio was read', () => {
-    // The REST API may not be answering, and the setup screen is not always
-    // served -- a wrong tank is better than no tank at all here.
-    const raw = { ...fixture(), fuelCapacity: 100 };
+  it('takes LMGTE from the fuel slider maximum instead', () => {
+    // A different answer from the same payload: the slider bound is the tank.
+    expect(capacityOf('GTE', { fuelLevelMax: 120 })).toBe(120);
+  });
 
-    expect(mapLmuSession(raw).DriverInfo.DriverCarFuelMaxLtr).toBe(100);
-    expect(mapLmuSession(raw, null, {}).DriverInfo.DriverCarFuelMaxLtr).toBe(
+  it('does not cross the two rules over', () => {
+    // A ratio must not be read as litres, nor a slider bound as a ratio --
+    // either confusion is wrong by roughly a hundred times.
+    expect(capacityOf('GTE', { fuelRatio: 0.83 })).toBe(100);
+    expect(capacityOf('GT3', { fuelLevelMax: 120 })).toBe(100);
+  });
+
+  it('leaves unverified classes on the capacity LMU reports', () => {
+    // LMP2 was confirmed correct that way; LMP3 is merely unchecked, which is
+    // why neither is in the table.
+    expect(
+      capacityOf('LMP2_ELMS', { fuelRatio: 0.83, fuelLevelMax: 120 })
+    ).toBe(100);
+    expect(capacityOf('LMP3', { fuelRatio: 0.83, fuelLevelMax: 120 })).toBe(
       100
     );
   });
 
-  it('ignores a non-positive or non-finite ratio', () => {
-    const raw = { ...fixture(), fuelCapacity: 100 };
+  it('tracks a fuel ratio the player changes', () => {
+    // Editing the setup moves the tank, and the REST task repeats so the new
+    // body arrives; this is the recomputation that has to follow it.
+    expect(capacityOf('GT3', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
+    expect(capacityOf('GT3', { fuelRatio: 1.1 })).toBeCloseTo(110, 5);
+    expect(capacityOf('GT3', { fuelRatio: 0.5 })).toBeCloseTo(50, 5);
+  });
 
-    [0, -1, Number.NaN, Number.POSITIVE_INFINITY].forEach((fuelRatio) => {
-      expect(
-        mapLmuSession(raw, null, { fuelRatio }).DriverInfo.DriverCarFuelMaxLtr
-      ).toBe(100);
+  it('falls back when the value its class wants is missing', () => {
+    // The REST API may not be answering, and the garage screen is not served
+    // at every moment.
+    expect(capacityOf('GT3')).toBe(100);
+    expect(capacityOf('GT3', {})).toBe(100);
+    expect(capacityOf('GTE', {})).toBe(100);
+  });
+
+  it('ignores a non-positive or non-finite value', () => {
+    [0, -1, Number.NaN, Number.POSITIVE_INFINITY].forEach((bad) => {
+      expect(capacityOf('GT3', { fuelRatio: bad })).toBe(100);
+      expect(capacityOf('GTE', { fuelLevelMax: bad })).toBe(100);
     });
   });
 
-  it('reports 0 when neither source has a capacity', () => {
-    // The fuel calculator rejects a non-positive tank and estimates one, so
-    // this degrades rather than lying.
-    const raw = { ...fixture(), fuelCapacity: undefined };
+  it('reports 0 when no source has a capacity', () => {
+    const raw = { ...asClass('GT3'), fuelCapacity: undefined };
 
     expect(mapLmuSession(raw).DriverInfo.DriverCarFuelMaxLtr).toBe(0);
   });

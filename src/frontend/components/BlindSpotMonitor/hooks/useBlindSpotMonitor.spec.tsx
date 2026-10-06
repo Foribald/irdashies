@@ -137,3 +137,49 @@ describe('useBlindSpotMonitor with true relative offsets', () => {
     expect(result.current.leftPercent).toBeCloseTo(0.5, 3);
   });
 });
+
+describe('useBlindSpotMonitor bar direction', () => {
+  /**
+   * The direction the bar travels, pinned against observed behaviour.
+   *
+   * BlindSpotMonitorIndicator renders `top: 25 - percent * 75`, so a positive
+   * percent is up the screen and a negative one down. A car arriving from
+   * behind must therefore start negative and climb -- it read the other way
+   * round in a real session, which is the regression this guards.
+   */
+  const atMetres = (metres: number): BlindSpotSnapshot => ({
+    carLeftRight: CarLeftRight.CarLeft,
+    carIdxLapDistPct: [],
+    isOnTrack: true,
+    leftLongitudinalM: metres,
+    rightLongitudinalM: null,
+    version: 1,
+  });
+
+  it('puts a car behind below centre and a car ahead above it', () => {
+    blindSpotSnapshot = atMetres(-2);
+    expect(
+      renderHook(() => useBlindSpotMonitor()).result.current.leftPercent
+    ).toBeLessThan(0);
+
+    blindSpotSnapshot = atMetres(2);
+    expect(
+      renderHook(() => useBlindSpotMonitor()).result.current.leftPercent
+    ).toBeGreaterThan(0);
+  });
+
+  it('climbs as a car overtakes from behind', () => {
+    // Exactly the move that exposed the inverted sign: alongside from the
+    // rear, through abeam, to clear ahead.
+    const seen = [-4, -2, 0, 2, 4].map((metres) => {
+      blindSpotSnapshot = atMetres(metres);
+      return renderHook(() => useBlindSpotMonitor()).result.current.leftPercent;
+    });
+
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]).toBeGreaterThan(seen[i - 1]);
+    }
+    expect(seen[0]).toBe(-1);
+    expect(seen[seen.length - 1]).toBe(1);
+  });
+});

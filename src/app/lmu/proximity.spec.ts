@@ -33,7 +33,10 @@ describe('LMU proximity', () => {
     );
 
     expect(positions?.lateral[1]).toBeCloseTo(-3);
-    expect(positions?.longitudinal[1]).toBeCloseTo(-10);
+    // Positive is ahead. The car is 10 m further along than the player, and
+    // this is the sign convention consumers rely on -- the rotation matches
+    // TinyPedal, the output sign is ours.
+    expect(positions?.longitudinal[1]).toBeCloseTo(10);
     expect(positions?.heading[1]).toBeCloseTo(0);
   });
 
@@ -80,13 +83,17 @@ describe('LMU proximity', () => {
 });
 
 describe('summariseLmuBlindSpot offsets', () => {
+  // Fixtures are world positions. Once rotated into the player's frame a car
+  // ahead comes out positive, which for this orientation means a lower world
+  // Z -- hence the negative Z on the cars these tests call "ahead". See the
+  // sign note in proximity.ts.
   it('reports how far fore or aft the car alongside is, in metres', () => {
     // 2.5 m to the left and 1.5 m ahead.
     const summary = summariseLmuBlindSpot(
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [2.5, 1.5],
+          [2.5, -1.5],
         ])
       )
     );
@@ -101,7 +108,7 @@ describe('summariseLmuBlindSpot offsets', () => {
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [2.5, 2],
+          [2.5, -2],
         ])
       )
     );
@@ -109,7 +116,7 @@ describe('summariseLmuBlindSpot offsets', () => {
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [2.5, -2],
+          [2.5, 2],
         ])
       )
     );
@@ -123,8 +130,8 @@ describe('summariseLmuBlindSpot offsets', () => {
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [2.5, 4],
-          [2.5, 0.5],
+          [2.5, -4],
+          [2.5, -0.5],
         ])
       )
     );
@@ -138,8 +145,8 @@ describe('summariseLmuBlindSpot offsets', () => {
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [2.5, 1],
-          [-2.5, -1],
+          [2.5, -1],
+          [-2.5, 1],
         ])
       )
     );
@@ -154,7 +161,7 @@ describe('summariseLmuBlindSpot offsets', () => {
       deriveLmuRelativePositions(
         fixture([
           [0, 0],
-          [-40, 0],
+          [-40, -0],
         ])
       )
     );

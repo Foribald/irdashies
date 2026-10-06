@@ -197,35 +197,59 @@ function sessionType(session: number): string {
 const FULL_VIRTUAL_ENERGY_PCT = 100;
 
 /**
+ * Where each class's fuel tank actually comes from.
+ *
+ * LMU's own mFuelCapacity is right for some classes and not others, and the
+ * garage setup carries two different answers depending on the car -- so this
+ * is a table rather than a formula, and each entry is here because a real
+ * session showed it:
+ *
+ * - `ratio`: fuelRatio is litres per percent of virtual energy, so a full tank
+ *   is a hundred times it. Hypercar and LMGT3.
+ * - `sliderMax`: the fuel slider's own upper bound is the tank in litres.
+ *   LMGTE.
+ * - absent: trust mFuelCapacity. LMP2 was confirmed correct that way, and
+ *   LMP3 is simply unverified rather than known good -- add it when it is
+ *   actually checked.
+ */
+const LMU_FUEL_CAPACITY_SOURCE: Readonly<
+  Record<string, 'ratio' | 'sliderMax'>
+> = {
+  Hypercar: 'ratio',
+  LMGT3: 'ratio',
+  LMGTE: 'sliderMax',
+};
+
+/** A usable positive quantity, or undefined. */
+const positive = (value: number | undefined): number | undefined =>
+  value !== undefined && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+
+/**
  * The player's fuel tank, in litres.
  *
- * Normally LMU's own mFuelCapacity. For LMGT3 that figure is wrong, and the
- * garage setup carries the answer instead: fuelRatio is litres per percent of
- * virtual energy, so a full tank is a hundred times it -- 0.83 becomes 83 L.
- *
- * Gated on the class deliberately. The ratio relationship is generic and could
- * replace mFuelCapacity for every car, but that figure has been confirmed
- * correct for LMP2, and overriding something every fuel projection depends on
- * across all classes on the strength of one class's evidence would be
- * guessing. Widen it per class as each one is actually checked.
- *
- * Falls back to mFuelCapacity whenever the ratio is missing: the REST API may
- * not be answering, and the setup screen is not served at every moment.
+ * Falls back to mFuelCapacity whenever the class has no entry above or the
+ * value it wants is missing: the REST API may not be answering, and the garage
+ * screen is not served at every moment. A wrong tank beats no tank, and 0
+ * means "estimate one" to the fuel calculator rather than being believed.
  */
 function resolveLmuFuelCapacityLtr(
   raw: Raw,
   playerClassName: string | undefined,
   rest: LmuRestSession | undefined
 ): number {
-  const ratio = rest?.fuelRatio;
-  if (
-    lmuCanonicalClass(playerClassName) === 'LMGT3' &&
-    ratio !== undefined &&
-    Number.isFinite(ratio) &&
-    ratio > 0
-  ) {
-    return ratio * FULL_VIRTUAL_ENERGY_PCT;
+  const canonical = lmuCanonicalClass(playerClassName);
+  const source = canonical ? LMU_FUEL_CAPACITY_SOURCE[canonical] : undefined;
+
+  if (source === 'ratio') {
+    const ratio = positive(rest?.fuelRatio);
+    if (ratio !== undefined) return ratio * FULL_VIRTUAL_ENERGY_PCT;
+  } else if (source === 'sliderMax') {
+    const sliderMax = positive(rest?.fuelLevelMax);
+    if (sliderMax !== undefined) return sliderMax;
   }
+
   return raw.fuelCapacity ?? 0;
 }
 

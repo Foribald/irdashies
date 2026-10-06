@@ -109,7 +109,15 @@ export function deriveLmuRelativePositions(
     if (deltaX * deltaX + deltaZ * deltaZ > RELEVANT_RADIUS_SQ) continue;
 
     const carLateral = cos * deltaX - sin * deltaZ;
-    const carLongitudinal = cos * deltaZ + sin * deltaX;
+    // Negated: positive is ahead.
+    //
+    // The rotation itself comes from TinyPedal, but that only fixes the
+    // arithmetic -- it says nothing about which way the result points, and the
+    // sign came out inverted against LMU. Established from a real session: a
+    // car overtaking from behind drove the blind spot bar downwards when it
+    // should have climbed. Consumers treat positive as ahead, so the
+    // correction belongs here rather than at each of them.
+    const carLongitudinal = -(cos * deltaZ + sin * deltaX);
     const carHeading =
       Math.atan2(raw.vehOriX[carIdx], raw.vehOriZ[carIdx]) - playerYaw;
     if (

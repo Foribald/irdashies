@@ -68,6 +68,15 @@ export interface LmuRestSession {
    * edits the setup.
    */
   fuelRatio?: number;
+  /**
+   * The upper bound of the garage's fuel slider.
+   *
+   * For LMGTE this is the tank in litres outright, where the ratio route does
+   * not apply. Kept as its own field rather than folded into a capacity,
+   * because which of the two a car wants is a per-class fact and belongs with
+   * the class, not with the number.
+   */
+  fuelLevelMax?: number;
   forecast?: {
     practice?: LmuWeatherNode[];
     qualify?: LmuWeatherNode[];

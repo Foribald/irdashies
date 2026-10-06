@@ -300,6 +300,24 @@ export const LMU_REST_TASKS: readonly LmuRestTask[] = [
           data.session.fuelRatio = value as number;
         },
       },
+      {
+        id: 'fuelLevelMax',
+        target: 'session',
+        // maxValue, not stringValue: this one is a real bound rather than a
+        // display string, and LMGTE's tank is that bound in litres.
+        parse: (payload) =>
+          finiteNumber(
+            at(payload, [
+              'carSetup',
+              'garageValues',
+              'VM_FUEL_LEVEL',
+              'maxValue',
+            ])
+          ),
+        apply: (data, value) => {
+          data.session.fuelLevelMax = value as number;
+        },
+      },
     ],
   },
   {
