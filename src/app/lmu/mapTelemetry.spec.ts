@@ -532,7 +532,14 @@ describe('mapLmuTelemetry brake bias', () => {
     const t = mapLmuTelemetry(raw);
 
     expect(t.dcBrakeBias.value[0]).toBeCloseTo(50.8, 4);
-    expect(t.dcPeakBrakeBias.value[0]).toBeCloseTo(50.8, 4);
+  });
+
+  it('does not publish the bias a second time as a rear brake valve', () => {
+    // It used to, which put a Rear Brake Valve column on screen reading the
+    // same percentage as the Brake Bias column next to it.
+    const t = mapLmuTelemetry({ ...fixture(), rearBrakeBias: 0.492 });
+
+    expect(t.dcPeakBrakeBias).toBeUndefined();
   });
 
   it('moves a full point of bias as a full point', () => {
@@ -692,5 +699,97 @@ describe('mapLmuTelemetry outright position', () => {
     expect(inClass[1]).toBe(1);
     expect(outright[1]).toBe(1);
     expect(outright[0]).toBeGreaterThan(outright[1]);
+  });
+});
+
+describe('mapLmuTelemetry adjustable dials', () => {
+  // Several of these dc* channels are absent from the generated Telemetry
+  // type, which covers only the variables iRacing's own capture listed.
+  // CarSystemsProcessor reads them by string key, so this does too.
+  const dial = (t: ReturnType<typeof mapLmuTelemetry>, key: string) =>
+    (t as unknown as Record<string, { value: unknown[] } | undefined>)[key];
+
+  it('publishes a dial the car has', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      abs: 4,
+      absMax: 10,
+      motorMap: 3,
+      motorMapMax: 9,
+      frontAntiSway: 2,
+      frontAntiSwayMax: 5,
+      rearAntiSway: 1,
+      rearAntiSwayMax: 5,
+    });
+
+    expect(dial(t, 'dcABS')?.value[0]).toBe(4);
+    expect(dial(t, 'dcEnginePower')?.value[0]).toBe(3);
+    expect(dial(t, 'dcAntiRollFront')?.value[0]).toBe(2);
+    expect(dial(t, 'dcAntiRollRear')?.value[0]).toBe(1);
+  });
+
+  it('omits a dial the car does not have', () => {
+    // Setting and max both zero is how LMU reports a control that is not
+    // fitted. Publishing it would give the car a row reading "off" forever,
+    // and the row is latched for the session once discovered.
+    const t = mapLmuTelemetry({ ...fixture(), abs: 0, absMax: 0 });
+
+    expect(dial(t, 'dcABS')).toBeUndefined();
+  });
+
+  it('keeps a dial the driver has switched off', () => {
+    const t = mapLmuTelemetry({ ...fixture(), abs: 0, absMax: 10 });
+
+    expect(dial(t, 'dcABS')?.value[0]).toBe(0);
+  });
+
+  it('fills the traction slots in order', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      tc: 5,
+      tcMax: 11,
+      tcSlip: 3,
+      tcSlipMax: 6,
+    });
+
+    expect(dial(t, 'dcTractionControl')?.value[0]).toBe(5);
+    expect(dial(t, 'dcTractionControl2')?.value[0]).toBe(3);
+  });
+
+  it('starts at the first traction slot when the car has no overall level', () => {
+    // A car offering only slip and cut would otherwise leave the TC column
+    // blank and show its first dial under TC2.
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      tcSlip: 3,
+      tcSlipMax: 6,
+      tcCut: 2,
+      tcCutMax: 6,
+    });
+
+    expect(dial(t, 'dcTractionControl')?.value[0]).toBe(3);
+    expect(dial(t, 'dcTractionControl2')?.value[0]).toBe(2);
+  });
+
+  it('drops the third traction dial rather than inventing a slot', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      tc: 5,
+      tcMax: 11,
+      tcSlip: 3,
+      tcSlipMax: 6,
+      tcCut: 2,
+      tcCutMax: 6,
+    });
+
+    expect(dial(t, 'dcTractionControl')?.value[0]).toBe(5);
+    expect(dial(t, 'dcTractionControl2')?.value[0]).toBe(3);
+  });
+
+  it('publishes no traction row for a car with no traction control', () => {
+    const t = mapLmuTelemetry(fixture());
+
+    expect(dial(t, 'dcTractionControl')).toBeUndefined();
+    expect(dial(t, 'dcTractionControl2')).toBeUndefined();
   });
 });

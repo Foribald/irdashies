@@ -581,9 +581,56 @@ export function mapLmuTelemetry(
   t.dcBrakeBias = num(
     raw.rearBrakeBias === undefined ? 0 : (1 - raw.rearBrakeBias) * 100
   );
-  t.dcPeakBrakeBias = num(
-    raw.rearBrakeBias === undefined ? 0 : (1 - raw.rearBrakeBias) * 100
-  );
+  // Driver-adjustable dials.
+  //
+  // LMU publishes each as a setting plus the top of its own scale, and a car
+  // without the control reports 0 for both -- so the max is the only thing
+  // that separates "ABS turned off" from "no ABS fitted". A channel is
+  // published only when its max is positive, because CarSystemsProcessor
+  // discovers rows by which variables a frame carries and keeps them for the
+  // rest of the session: publishing a flat 0 would give every LMU car a row
+  // for every control, each reading "off".
+  //
+  // dcPeakBrakeBias is deliberately not set. It used to carry a copy of
+  // dcBrakeBias, which put a second column on screen -- labelled Rear Brake
+  // Valve -- showing the same percentage as the brake bias beside it.
+  //
+  // LMU's brake migration has no home either, for the same reason: the only
+  // free brake channels are named Rear Brake Valve and Brake Bias Target in
+  // the catalogue, and a migration reading under either name is worse than an
+  // absent row. raw.migration is exported and waiting; giving it a column
+  // needs a label that does not come from an iRacing CarPath, which is a
+  // change to shared code rather than to this mapping.
+  const dial = (key: string, value?: number, max?: number) => {
+    if ((max ?? 0) > 0) t[key] = num(value);
+  };
+  dial('dcABS', raw.abs, raw.absMax);
+  dial('dcEnginePower', raw.motorMap, raw.motorMapMax);
+  dial('dcAntiRollFront', raw.frontAntiSway, raw.frontAntiSwayMax);
+  dial('dcAntiRollRear', raw.rearAntiSway, raw.rearAntiSwayMax);
+
+  // Three traction dials into the catalogue's two generic traction slots.
+  //
+  // LMU splits traction control into an overall level, a slip target and a
+  // throttle cut, and which of them a car actually offers varies -- a GT3 has
+  // the level alone, a Hypercar the slip and cut pair. iRacing's catalogue has
+  // Traction Control and Traction Control 2, named generically because the
+  // channel means whatever the car wires to it, so the dials the car has are
+  // filled in in order rather than each being pinned to a fixed slot. A car
+  // with only slip and cut would otherwise leave the TC column blank and show
+  // its first dial under TC2.
+  //
+  // The maxes are fixed per car and a car change resets the processor, so a
+  // column cannot change meaning underneath a driver mid-session.
+  let tcSlot = 0;
+  const tcDial = (value?: number, max?: number) => {
+    if ((max ?? 0) <= 0 || tcSlot > 1) return;
+    t[tcSlot === 0 ? 'dcTractionControl' : 'dcTractionControl2'] = num(value);
+    tcSlot += 1;
+  };
+  tcDial(raw.tc, raw.tcMax);
+  tcDial(raw.tcSlip, raw.tcSlipMax);
+  tcDial(raw.tcCut, raw.tcCutMax);
   t.dcPitSpeedLimiterToggle = bool(raw.speedLimiter);
   t.PitstopActive = bool(false);
   t.OnPitRoad = bool(playerIdx >= 0 ? raw.vehInPits[playerIdx] === 1 : false);

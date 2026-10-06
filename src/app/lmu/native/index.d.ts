@@ -121,6 +121,32 @@ export interface LmuRawTelemetry {
   speedLimiter?: number;
   absActive?: boolean;
   tcActive?: boolean;
+  /**
+   * Driver-adjustable dials, each with the top of its own scale.
+   *
+   * The max is how a car says it has the control at all: a car without the
+   * dial reports 0 for both. A setting whose max is 0 is not published as a
+   * channel, so the Car Systems widget shows a row only for a control the
+   * car really has.
+   */
+  abs?: number;
+  absMax?: number;
+  tc?: number;
+  tcMax?: number;
+  tcSlip?: number;
+  tcSlipMax?: number;
+  tcCut?: number;
+  tcCutMax?: number;
+  /** Engine map. */
+  motorMap?: number;
+  motorMapMax?: number;
+  /** Brake migration. */
+  migration?: number;
+  migrationMax?: number;
+  frontAntiSway?: number;
+  frontAntiSwayMax?: number;
+  rearAntiSway?: number;
+  rearAntiSwayMax?: number;
   ignitionStarter?: number;
   maxGears?: number;
   visualSteeringWheelRange?: number;

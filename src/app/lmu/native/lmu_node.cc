@@ -421,6 +421,28 @@ Napi::Value LmuSdkNode::Read(const Napi::CallbackInfo &info)
     out.Set("speedLimiter", player->mSpeedLimiter);
     out.Set("absActive", player->mABSActive);
     out.Set("tcActive", player->mTCActive);
+    // Driver-adjustable dials, each with the top of its own scale.
+    //
+    // The max is what says whether the car has the control at all: a car
+    // without the dial leaves both the setting and its max at 0, so without
+    // the max every LMU car would look like it had every control, all of
+    // them reading 0 and reported as switched off.
+    out.Set("abs", player->mABS);
+    out.Set("absMax", player->mABSMax);
+    out.Set("tc", player->mTC);
+    out.Set("tcMax", player->mTCMax);
+    out.Set("tcSlip", player->mTCSlip);
+    out.Set("tcSlipMax", player->mTCSlipMax);
+    out.Set("tcCut", player->mTCCut);
+    out.Set("tcCutMax", player->mTCCutMax);
+    out.Set("motorMap", player->mMotorMap);
+    out.Set("motorMapMax", player->mMotorMapMax);
+    out.Set("migration", player->mMigration);
+    out.Set("migrationMax", player->mMigrationMax);
+    out.Set("frontAntiSway", player->mFrontAntiSway);
+    out.Set("frontAntiSwayMax", player->mFrontAntiSwayMax);
+    out.Set("rearAntiSway", player->mRearAntiSway);
+    out.Set("rearAntiSwayMax", player->mRearAntiSwayMax);
     out.Set("ignitionStarter", player->mIgnitionStarter);
     out.Set("maxGears", player->mMaxGears);
     out.Set("visualSteeringWheelRange", player->mVisualSteeringWheelRange);
