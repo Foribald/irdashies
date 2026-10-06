@@ -207,6 +207,12 @@ void LmuSdkNode::FillVehicleArrays(Napi::Object &out) const
   auto posZ = Napi::Float64Array::New(env, cap);
   auto oriX = Napi::Float64Array::New(env, cap);
   auto oriZ = Napi::Float64Array::New(env, cap);
+  // From the 100 Hz telemetry block, unlike everything above it, which comes
+  // from 5 Hz scoring. These are what let a consumer integrate an opponent's
+  // lap position between scoring updates the way the player's already is.
+  auto vehSpeed = Napi::Float64Array::New(env, cap);
+  auto lapNumber = Napi::Int32Array::New(env, cap);
+  auto elapsedTime = Napi::Float64Array::New(env, cap);
 
   for (int i = 0; i < count; ++i)
   {
@@ -254,6 +260,12 @@ void LmuSdkNode::FillVehicleArrays(Napi::Object &out) const
       posZ[id] = telemetryVehicle->mPos.z;
       oriX[id] = telemetryVehicle->mOri[2].x;
       oriZ[id] = telemetryVehicle->mOri[2].z;
+      const double vx = telemetryVehicle->mLocalVel.x;
+      const double vy = telemetryVehicle->mLocalVel.y;
+      const double vz = telemetryVehicle->mLocalVel.z;
+      vehSpeed[id] = std::sqrt(vx * vx + vy * vy + vz * vz);
+      lapNumber[id] = telemetryVehicle->mLapNumber;
+      elapsedTime[id] = telemetryVehicle->mElapsedTime;
     }
   }
 
@@ -292,6 +304,9 @@ void LmuSdkNode::FillVehicleArrays(Napi::Object &out) const
   out.Set("vehPosZ", posZ);
   out.Set("vehOriX", oriX);
   out.Set("vehOriZ", oriZ);
+  out.Set("vehSpeed", vehSpeed);
+  out.Set("vehLapNumber", lapNumber);
+  out.Set("vehElapsedTime", elapsedTime);
 }
 
 Napi::Value LmuSdkNode::Read(const Napi::CallbackInfo &info)

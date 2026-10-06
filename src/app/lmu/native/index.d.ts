@@ -168,6 +168,12 @@ export interface LmuRawTelemetry {
   vehPosZ: Float64Array;
   vehOriX: Float64Array;
   vehOriZ: Float64Array;
+  /** 100 Hz speed magnitude per car, m/s, from the telemetry block. */
+  vehSpeed?: ArrayLike<number>;
+  /** 100 Hz lap number per car. */
+  vehLapNumber?: ArrayLike<number>;
+  /** 100 Hz per-car telemetry clock, seconds. */
+  vehElapsedTime?: ArrayLike<number>;
 }
 
 export interface LmuRawSession extends LmuRawTelemetry {

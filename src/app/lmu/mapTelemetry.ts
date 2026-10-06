@@ -8,6 +8,10 @@ import {
 import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
 import { lapTimeOrAbsent } from './sentinels';
 import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
+import {
+  refineLmuOpponentLapDistPcts,
+  type LmuOpponentLapDistanceState,
+} from './opponentLapDistance';
 import { isLmuRaceSession } from './mapSession';
 
 type Raw = import('./native').LmuRawTelemetry;
@@ -178,7 +182,12 @@ export function mapLmuTelemetry(
    * frames. Omitted -- as every spec does -- the fraction is the raw 5 Hz
    * scoring value, exactly as before.
    */
-  lapDistanceState?: LmuLapDistanceState
+  lapDistanceState?: LmuLapDistanceState,
+  /**
+   * Per-car integrator state, owned by the caller for the same reason. Omitted
+   * -- as every spec does -- opponents keep the raw 5 Hz scoring fraction.
+   */
+  opponentLapDistanceState?: LmuOpponentLapDistanceState
 ): Telemetry {
   // Boundary note: a handful of generated Telemetry keys (e.g. SessionTime) are
   // typed with an `undefined[]` value shape although the iRacing native layer
@@ -299,9 +308,7 @@ export function mapLmuTelemetry(
   t.CarIdxLapCompleted = occupiedArr(raw.vehTotalLaps, raw, -1);
   t.CarIdxLapDistPct = lapDistPctArr(raw.vehLapDistPct);
   // The player's own slot takes the smoothed value too, so anything measuring
-  // against the player sees continuous motion rather than a 5 Hz step. Other
-  // cars stay at the scoring rate: per-car speed is not exported, so there is
-  // nothing to integrate them with.
+  // against the player sees continuous motion rather than a 5 Hz step.
   const carIdxLapDistPct = t.CarIdxLapDistPct.value as number[];
   if (
     playerIdx >= 0 &&
@@ -309,6 +316,21 @@ export function mapLmuTelemetry(
     estimatedLapDistPct >= 0
   ) {
     carIdxLapDistPct[playerIdx] = lapDistPct;
+  }
+  // And every other car, from the same 100 Hz telemetry block. Without this
+  // they sit at the 5 Hz scoring rate -- ~14 m steps on a long circuit -- and
+  // CarSpeedsProcessor differentiates those steps into opponent speed, which
+  // the slow-car and faster-car warnings then threshold on.
+  if (opponentLapDistanceState) {
+    refineLmuOpponentLapDistPcts(opponentLapDistanceState, carIdxLapDistPct, {
+      scoringPcts: raw.vehLapDistPct,
+      speeds: raw.vehSpeed,
+      lapNumbers: raw.vehLapNumber,
+      elapsedTimes: raw.vehElapsedTime,
+      telemetryAvailable: raw.vehTelemetryAvailable,
+      trackLengthM: raw.lapDist,
+      playerCarIdx: playerIdx,
+    });
   }
   t.CarIdxTrackSurface = {
     value: Array.from(raw.vehInPits, (_, carIdx) => trackLocation(raw, carIdx)),

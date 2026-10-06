@@ -24,6 +24,10 @@ import {
   resetLmuLapDistanceState,
 } from '../../lmu/lapDistance';
 import {
+  createLmuOpponentLapDistanceState,
+  resetLmuOpponentLapDistanceState,
+} from '../../lmu/opponentLapDistance';
+import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
   LmuTrackMapStorage,
@@ -111,6 +115,9 @@ export async function publishLmuSDKEvents(
   // below -- never on the grace-hold path, where re-anchoring mid-lap would
   // drop the estimate back a few centimetres and silently cost a sample.
   const lapDistanceState = createLmuLapDistanceState();
+  // Per-car integrators, so opponents get a poll-rate lap position too rather
+  // than the 5 Hz scoring steps everything downstream would differentiate.
+  const opponentLapDistanceState = createLmuOpponentLapDistanceState();
 
   const telemetryCallbacks = new Set<(value: Telemetry) => void>();
   const sessionCallbacks = new Set<(value: Session) => void>();
@@ -191,6 +198,7 @@ export async function publishLmuSDKEvents(
           wasRunning = false;
           lastSessionSignature = null;
           resetLmuLapDistanceState(lapDistanceState);
+          resetLmuOpponentLapDistanceState(opponentLapDistanceState);
         }
         unavailableSince = null;
         await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
@@ -229,6 +237,7 @@ export async function publishLmuSDKEvents(
         }
         mapRecorder.reset(activeTrackName);
         resetLmuLapDistanceState(lapDistanceState);
+        resetLmuOpponentLapDistanceState(opponentLapDistanceState);
         lastSessionSignature = null;
         logger.info(
           `[lmuSdkBridge] Track ${activeTrackName}; map ${trackMap ? 'loaded' : 'not found; recording starts at the next finish-line crossing'}`
@@ -278,7 +287,11 @@ export async function publishLmuSDKEvents(
       }
 
       perfMetrics.markStart('lifecycleTelemetry');
-      const telemetry = mapLmuTelemetry(raw, lapDistanceState);
+      const telemetry = mapLmuTelemetry(
+        raw,
+        lapDistanceState,
+        opponentLapDistanceState
+      );
       lifecycle?._onTelemetry(telemetry);
       perfMetrics.markEnd('lifecycleTelemetry');
 
