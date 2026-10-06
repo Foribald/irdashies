@@ -14,3 +14,38 @@ export const pitstopEstimateFixture = () => ({
   tires: 8.4,
   fuel: 6.1,
 });
+
+/** GET /rest/garage/UIScreen/RepairAndRefuel, a fuel car with litres. */
+export const repairAndRefuelFixture = () => ({
+  wearables: {
+    body: { aero: 0.12 },
+    brakes: [0.9, 0.88, 0.95, 0.94],
+    suspension: [1, 1, 0.97, 1],
+  },
+  pitMenu: {
+    pitMenu: [
+      { name: 'TIRES:', currentSetting: 0, settings: [{ text: 'No Change' }] },
+      {
+        name: 'FUEL:',
+        currentSetting: 2,
+        settings: [{ text: '+0 L' }, { text: '+10 L' }, { text: '+45 L' }],
+      },
+    ],
+  },
+  fuelInfo: { maxVirtualEnergy: 100 },
+});
+
+/** The same screen for an energy-limited car: the menu offers VE, not fuel. */
+export const repairAndRefuelVirtualEnergyFixture = () => ({
+  ...repairAndRefuelFixture(),
+  pitMenu: {
+    pitMenu: [
+      { name: 'VIRTUAL ENERGY:', currentSetting: 78, settings: [] },
+      {
+        name: 'FUEL:',
+        currentSetting: 1,
+        settings: [{ text: '+0 L' }, { text: '+30 L' }],
+      },
+    ],
+  },
+});

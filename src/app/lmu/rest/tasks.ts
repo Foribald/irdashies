@@ -71,7 +71,135 @@ const numberCell = (
   apply: (data, value) => set(data, cell(value as number)),
 });
 
+/** Litres in one US gallon, which is how LMU words a gallon pit-menu entry. */
+const LITRES_PER_GALLON = 3.7854118;
+
+/** First number in a string, or undefined. Pit-menu text is "+12.5 gal". */
+const firstNumber = (text: unknown): number | undefined => {
+  if (typeof text !== 'string') return undefined;
+  const match = /-?\d+(?:\.\d+)?/.exec(text);
+  return match ? Number(match[0]) : undefined;
+};
+
+/**
+ * Exactly four finite numbers, in LMU's corner order.
+ *
+ * LMU reports FL, FR, RL, RR, which is the same order as this repo's own
+ * corner loop in mapTelemetry.ts -- so there is no remapping to do here, and
+ * nobody should add one. A shorter array is rejected rather than published
+ * short, because a consumer indexing corner 3 would read undefined.
+ */
+const fourCorners = (value: unknown): number[] | undefined => {
+  if (!Array.isArray(value) || value.length !== 4) return undefined;
+  const corners = value.map(finiteNumber);
+  return corners.every((corner): corner is number => corner !== undefined)
+    ? (corners as number[])
+    : undefined;
+};
+
+/**
+ * What the next pit stop will put in, from the pit menu.
+ *
+ * Two units share this one field, which is why the flag travels with it. A
+ * Hypercar or LMDh is energy-limited, so its menu offers VIRTUAL ENERGY as a
+ * percentage; everything else offers FUEL, as a volume that LMU words in
+ * either litres or gallons depending on the player's units. A number that is
+ * sometimes a percentage and sometimes litres, with nothing saying which, is
+ * a bug waiting to be written downstream.
+ */
+const refuelTarget = (
+  payload: unknown
+): { amount: number; isVirtualEnergy: boolean } | undefined => {
+  const menu = at(payload, ['pitMenu', 'pitMenu']);
+  if (!Array.isArray(menu)) return undefined;
+
+  for (const entry of menu) {
+    const name = at(entry, ['name']);
+
+    if (name === 'VIRTUAL ENERGY:') {
+      const amount = finiteNumber(Number(at(entry, ['currentSetting'])));
+      return amount === undefined
+        ? undefined
+        : { amount, isVirtualEnergy: true };
+    }
+
+    if (name === 'FUEL:') {
+      const index = at(entry, ['currentSetting']);
+      const settings = at(entry, ['settings']);
+      if (typeof index !== 'number' || !Array.isArray(settings)) {
+        return undefined;
+      }
+      const text = at(settings[index], ['text']);
+      const amount = firstNumber(text);
+      if (amount === undefined) return undefined;
+      const isGallons =
+        typeof text === 'string' && text.toLowerCase().includes('gal');
+      return {
+        amount: isGallons ? amount * LITRES_PER_GALLON : amount,
+        isVirtualEnergy: false,
+      };
+    }
+  }
+  return undefined;
+};
+
 export const LMU_REST_TASKS: readonly LmuRestTask[] = [
+  {
+    id: 'repair-and-refuel',
+    path: '/rest/garage/UIScreen/RepairAndRefuel',
+    mode: 'repeat',
+    // The pit menu is static for most of a stint, so the backoff carries this
+    // out to the cap; the base rate is for when the driver is actually in it.
+    baseIntervalMs: 200,
+    outputs: [
+      {
+        id: 'refuelTarget',
+        target: 'telemetry',
+        parse: refuelTarget,
+        apply: (data, value) => {
+          const { amount, isVirtualEnergy } = value as {
+            amount: number;
+            isVirtualEnergy: boolean;
+          };
+          data.cells.refuelTarget = { value: [amount] };
+          data.cells.refuelTargetIsVirtualEnergy = {
+            value: [isVirtualEnergy],
+          };
+        },
+      },
+      {
+        id: 'maxVirtualEnergy',
+        // Session, not telemetry: it is a per-car constant, and a telemetry
+        // target here would force a session rebuild on every poll.
+        target: 'session',
+        parse: (payload) =>
+          finiteNumber(at(payload, ['fuelInfo', 'maxVirtualEnergy'])),
+        apply: (data, value) => {
+          data.session.maxVirtualEnergy = value as number;
+        },
+      },
+      numberCell('aeroDamage', ['wearables', 'body', 'aero'], (data, value) => {
+        data.cells.aeroDamage = value;
+      }),
+      {
+        id: 'brakeWear',
+        target: 'telemetry',
+        parse: (payload) => fourCorners(at(payload, ['wearables', 'brakes'])),
+        apply: (data, value) => {
+          data.cells.brakeWear = { value: value as number[] };
+        },
+      },
+      {
+        id: 'suspensionDamage',
+        target: 'telemetry',
+        parse: (payload) =>
+          fourCorners(at(payload, ['wearables', 'suspension'])),
+        apply: (data, value) => {
+          data.cells.suspensionDamage = { value: value as number[] };
+        },
+      },
+    ],
+  },
   {
     id: 'pitstop-estimate',
     path: '/rest/strategy/pitstop-estimate',

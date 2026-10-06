@@ -426,6 +426,19 @@ export function mapLmuTelemetry(
     t.LmuPitStopTime = staged(restCells.pitStopTime);
   }
   if (restCells?.repairTime) t.LmuRepairTime = staged(restCells.repairTime);
+  if (restCells?.refuelTarget) {
+    t.LmuRefuelTarget = staged(restCells.refuelTarget);
+  }
+  if (restCells?.refuelTargetIsVirtualEnergy) {
+    t.LmuRefuelTargetIsVirtualEnergy = staged(
+      restCells.refuelTargetIsVirtualEnergy
+    );
+  }
+  if (restCells?.brakeWear) t.LmuBrakeWear = staged(restCells.brakeWear);
+  if (restCells?.suspensionDamage) {
+    t.LmuSuspensionDamage = staged(restCells.suspensionDamage);
+  }
+  if (restCells?.aeroDamage) t.LmuAeroDamage = staged(restCells.aeroDamage);
 
   // LMU reports steering as a fraction of the full wheel range; iRacing uses radians.
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);

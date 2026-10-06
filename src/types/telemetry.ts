@@ -20,6 +20,16 @@ export type Telemetry = {
    */
   LmuPitStopTime?: TelemetryVar<number[]>;
   LmuRepairTime?: TelemetryVar<number[]>;
+  /**
+   * What the next pit stop will add. Litres, or a virtual-energy percentage --
+   * the companion flag says which, and nothing downstream should guess.
+   */
+  LmuRefuelTarget?: TelemetryVar<number[]>;
+  LmuRefuelTargetIsVirtualEnergy?: TelemetryVar<boolean[]>;
+  /** Wear and damage, 0..1. The four-element arrays are LF, RF, LR, RR. */
+  LmuBrakeWear?: TelemetryVar<number[]>;
+  LmuSuspensionDamage?: TelemetryVar<number[]>;
+  LmuAeroDamage?: TelemetryVar<number[]>;
 };
 /**
  * What SessionLapsRemain and SessionLapsTotal carry when the session has no
