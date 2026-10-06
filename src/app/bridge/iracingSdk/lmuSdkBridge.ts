@@ -248,6 +248,17 @@ export async function publishLmuSDKEvents(
         logger.info(
           `[lmuSdkBridge] LMU is running; version=${raw.gameVersion} session=${raw.session} phase=${raw.gamePhase} vehicles=${raw.numVehicles}/${raw.activeVehicles} player=${raw.playerVehicleIdx} trackLength=${raw.lapDist}`
         );
+        // The fuel calculator falls back to a 60 L default whenever capacity
+        // arrives as 0, and mFuelCapacity is the only field it can come from.
+        // Logged once per connect so a session can say which of these LMU
+        // actually fills: mFuelCapacity, or the per-car mFuelFraction it would
+        // otherwise have to be derived from.
+        logger.info(
+          `[lmuSdkBridge] Fuel: capacity=${raw.fuelCapacity ?? 'absent'} L level=${raw.fuel ?? 'absent'} L fuelFraction=${
+            rawSession?.drivers?.[raw.playerVehicleIdx]?.fuelFraction ??
+            'absent (session not polled this tick)'
+          }`
+        );
         wasRunning = true;
         publishRunningState(true);
         lifecycle?._onEnter({ replay: false });
@@ -265,6 +276,21 @@ export async function publishLmuSDKEvents(
           const playerIdx = rawSession.playerVehicleIdx;
           logger.info(
             `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
+          );
+          // The exact strings the class and manufacturer lookups match on.
+          // LMP2 and LMP3 show no manufacturer badge, and the patterns are
+          // written with word boundaries -- "LigierJSP320" would not match
+          // /ligier/ -- so this says whether the cause is the pattern or
+          // a manufacturer with no sprite at all.
+          logger.info(
+            `[lmuSdkBridge] Car classes/models: ${[
+              ...new Set(
+                (rawSession.drivers ?? []).map(
+                  (d) =>
+                    `${d.className}|${d.vehicleModel ?? ''}|${d.vehicleName}`
+                )
+              ),
+            ].join(' ;; ')}`
           );
         }
       }
