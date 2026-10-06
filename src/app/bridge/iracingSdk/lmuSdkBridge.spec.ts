@@ -16,6 +16,15 @@ const sdkState = vi.hoisted(() => ({
   readThrows: false,
 }));
 
+/**
+ * The REST state the bridge would create for itself, held here so a spec can
+ * bump its revision without any HTTP.
+ */
+const restState = vi.hoisted(() => ({
+  data: { revision: 0, cells: {}, session: {} as Record<string, unknown> },
+  poller: { setActive: vi.fn(), invalidateOnce: vi.fn(), stop: vi.fn() },
+}));
+
 /** Shared so the specs can observe how the bridge drives them. */
 const recorderUpdate = vi.hoisted(() => vi.fn(() => null));
 const lapDistanceSpies = vi.hoisted(() => ({
@@ -121,6 +130,22 @@ vi.mock('../../lmu/mapSession', () => ({
 
 vi.mock('../../lmu/sessionSignature', () => ({
   lmuSessionSignature: () => 'signature',
+}));
+
+// The poller has its own specs; here only the bridge's use of it matters --
+// that it is started and stopped at the right moments, and that a revision
+// bump forces a session republish.
+vi.mock('../../lmu/rest/state', () => ({
+  createLmuRestData: () => restState.data,
+  resetLmuRestData: vi.fn(),
+}));
+
+vi.mock('../../lmu/rest/poller', () => ({
+  createLmuRestPoller: () => restState.poller,
+}));
+
+vi.mock('../../lmu/rest/httpJson', () => ({
+  createLmuRestTransport: () => vi.fn(),
 }));
 
 const createOverlayManager = () =>
@@ -281,6 +306,93 @@ describe('publishLmuSDKEvents lap-distance wiring', () => {
     expect(observed).not.toContain(false);
     expect(lapDistanceSpies.reset.mock.calls.length).toBe(resetsAfterStartup);
 
+    bridge.stop();
+  });
+});
+
+/**
+ * The gate that makes REST-sourced session values visible at all.
+ *
+ * lmuSessionSignature only sees shared memory, so a value arriving from the
+ * REST API changes nothing it hashes. The signature is pinned to a constant in
+ * this file's mocks, which means a second sessionData publish here can only
+ * come from the revision gate -- exactly the silent failure this guards.
+ */
+describe('publishLmuSDKEvents and REST-sourced session values', () => {
+  const sessionPublishCount = (overlayManager: OverlayManager) =>
+    vi
+      .mocked(overlayManager.publishMessage)
+      .mock.calls.filter(([channel]) => channel === 'sessionData').length;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sdkState.running = true;
+    sdkState.readThrows = false;
+    restState.data.revision = 0;
+    restState.data.session = {};
+  });
+
+  it('republishes the session when only the REST revision moved', async () => {
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    await vi.waitFor(() => expect(sessionPublishCount(overlayManager)).toBe(1));
+    const afterFirst = sessionPublishCount(overlayManager);
+
+    restState.data.session = { timeScale: 6 };
+    restState.data.revision += 1;
+
+    await vi.waitFor(() =>
+      expect(sessionPublishCount(overlayManager)).toBeGreaterThan(afterFirst)
+    );
+    bridge.stop();
+  });
+
+  it('does not republish while the revision is unchanged', async () => {
+    // The other half of the gate: it must not force a rebuild every poll, or
+    // a whole-object broadcast rides along with it at the poll rate.
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    await vi.waitFor(() => expect(sessionPublishCount(overlayManager)).toBe(1));
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(sessionPublishCount(overlayManager)).toBe(1);
+    bridge.stop();
+  });
+
+  it('starts the poller when LMU comes up and stops it on teardown', async () => {
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    await vi.waitFor(() =>
+      expect(restState.poller.setActive).toHaveBeenCalledWith(true)
+    );
+
+    bridge.stop();
+
+    expect(restState.poller.stop).toHaveBeenCalled();
+  });
+
+  it('stops polling when the sim is confirmed gone', async () => {
+    // Otherwise it keeps hitting a port nothing is serving any more.
+    const overlayManager = createOverlayManager();
+    const { publishLmuSDKEvents } = await import('./lmuSdkBridge');
+    const bridge = await publishLmuSDKEvents(overlayManager);
+
+    await vi.waitFor(() =>
+      expect(restState.poller.setActive).toHaveBeenCalledWith(true)
+    );
+
+    sdkState.readThrows = true;
+
+    await vi.waitFor(() =>
+      expect(restState.poller.setActive).toHaveBeenCalledWith(false)
+    );
     bridge.stop();
   });
 });

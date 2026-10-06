@@ -11,6 +11,7 @@ import {
   LMU_MANUFACTURERS,
 } from '@irdashies/types';
 import { fnv1a32 } from './hash';
+import type { LmuRestSession } from '@irdashies/types';
 
 /**
  * LMU's pit and rolling-start speed limit, km/h.
@@ -188,7 +189,13 @@ function sessionType(session: number): string {
  */
 export function mapLmuSession(
   raw: Raw,
-  trackMap?: LmuTrackMap | null
+  trackMap?: LmuTrackMap | null,
+  /**
+   * Session values from LMU's local REST API. Omitted, the LmuRest key is
+   * absent rather than present and empty, so a consumer can tell "not polled"
+   * from "polled and found nothing".
+   */
+  rest?: LmuRestSession
 ): Session {
   const trackLengthM = raw.lapDist;
   const shiftLights = deriveLmuShiftLightRpm(raw.engineMaxRPM);
@@ -497,5 +504,9 @@ export function mapLmuSession(
     CarSetup: { UpdateCount: 0 },
     QualifyResultsInfo: { Results: qualiResults },
     ...(trackMap ? { LmuTrackMap: trackMap } : {}),
+    // Only when something was actually read. An empty object would tell a
+    // consumer the API answered and reported nothing, which is a different
+    // thing from never having been polled.
+    ...(rest && Object.keys(rest).length > 0 ? { LmuRest: rest } : {}),
   };
 }

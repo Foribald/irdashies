@@ -28,6 +28,10 @@ import {
   createLmuOpponentLapDistanceState,
   resetLmuOpponentLapDistanceState,
 } from '../../lmu/opponentLapDistance';
+import { lmuRestOrigin } from '../../lmu/rest/constants';
+import { createLmuRestTransport } from '../../lmu/rest/httpJson';
+import { createLmuRestPoller } from '../../lmu/rest/poller';
+import { createLmuRestData } from '../../lmu/rest/state';
 import {
   loadLmuTrackMap,
   LmuTrackMapRecorder,
@@ -83,6 +87,21 @@ export async function publishLmuSDKEvents(
   const mapStorage = new LmuTrackMapStorage(
     path.join(app.getPath('userData'), 'lmu-track-maps.json')
   );
+
+  // Properties LMU serves over its local REST API. The poller runs on its own
+  // timers; this loop only ever reads the object it fills, synchronously. See
+  // lmu/rest/poller.ts for why that separation is structural rather than a
+  // matter of discipline.
+  const restData = createLmuRestData();
+  const restPoller = createLmuRestPoller({
+    data: restData,
+    transport: createLmuRestTransport(lmuRestOrigin()),
+    logger: {
+      info: (message) => logger.info(message),
+      warn: (message) => logger.warn(message),
+    },
+  });
+  let lastRestRevision = restData.revision;
 
   const perfMetrics = new TelemetryPerfMetrics(undefined, channelBus);
   perfMetrics.startReporting();
@@ -200,6 +219,7 @@ export async function publishLmuSDKEvents(
           lastSessionSignature = null;
           resetLmuLapDistanceState(lapDistanceState);
           resetLmuOpponentLapDistanceState(opponentLapDistanceState);
+          restPoller.setActive(false);
         }
         unavailableSince = null;
         await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
@@ -237,6 +257,9 @@ export async function publishLmuSDKEvents(
           }
         }
         mapRecorder.reset(activeTrackName);
+        // Session settings and the forecast are fetched once per activation,
+        // and a new track means a new session.
+        restPoller.invalidateOnce();
         resetLmuLapDistanceState(lapDistanceState);
         resetLmuOpponentLapDistanceState(opponentLapDistanceState);
         lastSessionSignature = null;
@@ -250,11 +273,21 @@ export async function publishLmuSDKEvents(
           `[lmuSdkBridge] LMU is running; version=${raw.gameVersion} session=${raw.session} phase=${raw.gamePhase} vehicles=${raw.numVehicles}/${raw.activeVehicles} player=${raw.playerVehicleIdx} trackLength=${raw.lapDist}`
         );
         wasRunning = true;
+        restPoller.setActive(true);
         publishRunningState(true);
         lifecycle?._onEnter({ replay: false });
       }
 
       const tickTime = performance.now();
+
+      // A REST-sourced session value changing is invisible to
+      // lmuSessionSignature, which only sees shared memory. Forcing the
+      // signature null is the same lever the track map uses above, and without
+      // it a value like timeScale would arrive and never be published.
+      if (restData.revision !== lastRestRevision) {
+        lastRestRevision = restData.revision;
+        lastSessionSignature = null;
+      }
 
       let session: Session | null = null;
       if (rawSession) {
@@ -262,7 +295,7 @@ export async function publishLmuSDKEvents(
         const signature = lmuSessionSignature(rawSession);
         if (signature !== lastSessionSignature) {
           lastSessionSignature = signature;
-          session = mapLmuSession(rawSession, trackMap);
+          session = mapLmuSession(rawSession, trackMap, restData.session);
           const playerIdx = rawSession.playerVehicleIdx;
           logger.info(
             `[lmuSdkBridge] Session snapshot track=${rawSession.trackName} session=${rawSession.session} phase=${rawSession.gamePhase} flags=${Array.from(rawSession.sectorFlags).join(',')} sector=${rawSession.vehSector[playerIdx] ?? -1} sectors=${rawSession.vehLastSector1[playerIdx] ?? -1},${rawSession.vehLastSector2[playerIdx] ?? -1},${rawSession.vehLastLapTime[playerIdx] ?? -1}`
@@ -366,6 +399,7 @@ export async function publishLmuSDKEvents(
       overlayManager.clearLatestSessionData?.();
       lifecycle?._onDisconnect();
     }
+    restPoller.setActive(false);
     publishRunningState(false);
   });
 
@@ -392,6 +426,7 @@ export async function publishLmuSDKEvents(
     },
     stop: () => {
       shouldStop = true;
+      restPoller.stop();
       overlayManager.clearLatestSessionData?.();
       sdk.stop();
       telemetryCallbacks.clear();

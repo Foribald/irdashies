@@ -363,3 +363,50 @@ describe('mapLmuSession car classes', () => {
     expect(driverClass(s, 0)?.CarClassRelSpeed).toBe(0);
   });
 });
+
+describe('mapLmuSession REST session values', () => {
+  it('omits LmuRest when nothing was polled', () => {
+    expect(mapLmuSession(fixture()).LmuRest).toBeUndefined();
+  });
+
+  it('omits LmuRest when the API answered with nothing usable', () => {
+    // Absent means "not polled"; an empty object would claim the API answered
+    // and reported nothing, which is a different thing.
+    expect(mapLmuSession(fixture(), null, {}).LmuRest).toBeUndefined();
+  });
+
+  it('carries the session values it is given', () => {
+    const s = mapLmuSession(fixture(), null, {
+      timeScale: 6,
+      privateQualifying: true,
+      maxVirtualEnergy: 100,
+    });
+
+    expect(s.LmuRest).toEqual({
+      timeScale: 6,
+      privateQualifying: true,
+      maxVirtualEnergy: 100,
+    });
+  });
+
+  it('coexists with a track map, the other out-of-band source', () => {
+    const trackMap = {
+      active: {
+        inside: '',
+        outside: '',
+        trackPathPoints: [{ x: 0, y: 0 }],
+        totalLength: 1,
+      },
+      startFinish: {
+        line: '',
+        point: { x: 0, y: 0, length: 0 },
+        direction: 'anticlockwise' as const,
+      },
+    };
+
+    const s = mapLmuSession(fixture(), trackMap, { timeScale: 2 });
+
+    expect(s.LmuTrackMap).toEqual(trackMap);
+    expect(s.LmuRest?.timeScale).toBe(2);
+  });
+});

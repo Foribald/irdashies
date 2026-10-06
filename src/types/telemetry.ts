@@ -14,6 +14,12 @@ export type Telemetry = {
   /** Fore(+)/aft(-) metres of the nearest car alongside; null when clear. */
   LmuBlindSpotLeftLongitudinal?: TelemetryVar<(number | null)[]>;
   LmuBlindSpotRightLongitudinal?: TelemetryVar<(number | null)[]>;
+  /**
+   * From LMU's local REST API rather than shared memory, so present only when
+   * that API answers. Seconds.
+   */
+  LmuPitStopTime?: TelemetryVar<number[]>;
+  LmuRepairTime?: TelemetryVar<number[]>;
 };
 /**
  * What SessionLapsRemain and SessionLapsTotal carry when the session has no

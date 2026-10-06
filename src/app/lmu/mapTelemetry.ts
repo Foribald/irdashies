@@ -16,6 +16,7 @@ import {
   refineLmuOpponentLapDistPcts,
   type LmuOpponentLapDistanceState,
 } from './opponentLapDistance';
+import type { LmuRestCell, LmuRestCells } from './rest/state';
 import { isLmuRaceSession } from './mapSession';
 import {
   createLmuClassPositionState,
@@ -214,7 +215,12 @@ export function mapLmuTelemetry(
    * Per-car integrator state, owned by the caller for the same reason. Omitted
    * -- as every spec does -- opponents keep the raw 5 Hz scoring fraction.
    */
-  opponentLapDistanceState?: LmuOpponentLapDistanceState
+  opponentLapDistanceState?: LmuOpponentLapDistanceState,
+  /**
+   * Values from LMU's local REST API, polled outside this path. Omitted -- as
+   * every spec does -- the channels it feeds are simply absent.
+   */
+  restCells?: LmuRestCells
 ): Telemetry {
   // Boundary note: a handful of generated Telemetry keys (e.g. SessionTime) are
   // typed with an `undefined[]` value shape although the iRacing native layer
@@ -406,6 +412,20 @@ export function mapLmuTelemetry(
   t.LmuBlindSpotRightLongitudinal = {
     value: [blindSpot?.rightLongitudinalM ?? null],
   };
+
+  // Reference assignments, not copies: the poller replaces a cell when its
+  // value changes, so there is nothing to clone and a frame allocates nothing
+  // for these. Absent cells leave the channel undefined, which is what keeps
+  // iRacing and every existing spec unaffected.
+  //
+  // The cast bridges two deliberate facts: `t` above stages mutable cells, and
+  // a REST cell is readonly so an in-place write to one is a type error (see
+  // rest/state.ts). Handed over by reference and never written to here.
+  const staged = (cell: LmuRestCell<unknown>) => cell as { value: unknown[] };
+  if (restCells?.pitStopTime) {
+    t.LmuPitStopTime = staged(restCells.pitStopTime);
+  }
+  if (restCells?.repairTime) t.LmuRepairTime = staged(restCells.repairTime);
 
   // LMU reports steering as a fraction of the full wheel range; iRacing uses radians.
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);

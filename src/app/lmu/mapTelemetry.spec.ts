@@ -551,3 +551,44 @@ describe('mapLmuTelemetry brake bias', () => {
     expect(t.dcBrakeBias.value[0]).toBe(0);
   });
 });
+
+describe('mapLmuTelemetry REST channels', () => {
+  it('omits the channels entirely when no REST data is supplied', () => {
+    // What keeps iRacing and every pre-existing spec unaffected: absent, not
+    // present-and-zero.
+    const t = mapLmuTelemetry(fixture());
+
+    expect(t.LmuPitStopTime).toBeUndefined();
+    expect(t.LmuRepairTime).toBeUndefined();
+  });
+
+  it('publishes the cells it is given', () => {
+    const t = mapLmuTelemetry(fixture(), undefined, undefined, {
+      pitStopTime: { value: [32.5] },
+      repairTime: { value: [12.25] },
+    });
+
+    expect(t.LmuPitStopTime?.value[0]).toBe(32.5);
+    expect(t.LmuRepairTime?.value[0]).toBe(12.25);
+  });
+
+  it('hands the cell over by reference rather than copying it', () => {
+    // The zero-allocation read path depends on this. The poller replaces a
+    // cell on change, so there is nothing to clone per frame.
+    const cell = { value: [32.5] } as const;
+    const t = mapLmuTelemetry(fixture(), undefined, undefined, {
+      pitStopTime: cell,
+    });
+
+    expect(t.LmuPitStopTime).toBe(cell);
+  });
+
+  it('publishes only the cells present, leaving the rest absent', () => {
+    const t = mapLmuTelemetry(fixture(), undefined, undefined, {
+      repairTime: { value: [5] },
+    });
+
+    expect(t.LmuPitStopTime).toBeUndefined();
+    expect(t.LmuRepairTime?.value[0]).toBe(5);
+  });
+});
