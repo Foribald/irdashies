@@ -592,3 +592,39 @@ describe('mapLmuTelemetry REST channels', () => {
     expect(t.LmuRepairTime?.value[0]).toBe(5);
   });
 });
+
+describe('mapLmuTelemetry virtual energy', () => {
+  it('publishes the shared-memory energy channels', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      virtualEnergy: 0.62,
+      stateOfCharge: 0.4,
+      regen: 0.1,
+    });
+
+    expect(t.LmuVirtualEnergy?.value[0]).toBeCloseTo(0.62, 5);
+    expect(t.LmuStateOfCharge?.value[0]).toBeCloseTo(0.4, 5);
+    expect(t.LmuRegen?.value[0]).toBeCloseTo(0.1, 5);
+  });
+
+  it('publishes a zero rather than treating it as absent', () => {
+    // A car with no hybrid system reports 0, and that is a real reading. Only
+    // a tape or a pre-export build omits the field entirely.
+    const t = mapLmuTelemetry({ ...fixture(), virtualEnergy: 0 });
+
+    expect(t.LmuVirtualEnergy?.value[0]).toBe(0);
+  });
+
+  it('omits the channels when the addon does not export them', () => {
+    const t = mapLmuTelemetry({
+      ...fixture(),
+      virtualEnergy: undefined,
+      stateOfCharge: undefined,
+      regen: undefined,
+    });
+
+    expect(t.LmuVirtualEnergy).toBeUndefined();
+    expect(t.LmuStateOfCharge).toBeUndefined();
+    expect(t.LmuRegen).toBeUndefined();
+  });
+});

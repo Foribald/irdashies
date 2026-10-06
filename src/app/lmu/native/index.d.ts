@@ -104,6 +104,12 @@ export interface LmuRawTelemetry {
   steeringShaftTorque?: number;
   fuel?: number;
   fuelCapacity?: number;
+  /** Virtual energy remaining. A fraction of the REST maxVirtualEnergy. */
+  virtualEnergy?: number;
+  /** Hybrid state of charge. */
+  stateOfCharge?: number;
+  /** Hybrid regeneration. */
+  regen?: number;
   engineMaxRPM?: number;
   rearBrakeBias?: number;
   lapNumber?: number;

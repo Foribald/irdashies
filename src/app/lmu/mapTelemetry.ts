@@ -440,6 +440,19 @@ export function mapLmuTelemetry(
   }
   if (restCells?.aeroDamage) t.LmuAeroDamage = staged(restCells.aeroDamage);
 
+  // Shared memory, unlike the cells above. The addon always writes these when
+  // LMU is running, so the guard is only for a tape or a build predating the
+  // export -- not for a car without a hybrid system, which reports 0. A
+  // consumer wanting "does this car use virtual energy?" should ask the pit
+  // menu via LmuRefuelTargetIsVirtualEnergy, not infer it from a 0 here.
+  if (raw.virtualEnergy !== undefined) {
+    t.LmuVirtualEnergy = num(raw.virtualEnergy);
+  }
+  if (raw.stateOfCharge !== undefined) {
+    t.LmuStateOfCharge = num(raw.stateOfCharge);
+  }
+  if (raw.regen !== undefined) t.LmuRegen = num(raw.regen);
+
   // LMU reports steering as a fraction of the full wheel range; iRacing uses radians.
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);
   t.Throttle = num(raw.filteredThrottle);
