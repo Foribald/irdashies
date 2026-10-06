@@ -87,3 +87,39 @@ export const weatherFixture = () => ({
     FINISH: node(2, 19, 40),
   },
 });
+
+/**
+ * GET /rest/garage/UIScreen/CarSetupOverview, trimmed from a real payload.
+ *
+ * The real one carries the whole setup -- a hundred-odd garageValues keys. The
+ * three kept here are the ones that relate fuel to virtual energy, and they
+ * are internally consistent on purpose: 23% at 0.83 L per percent is 19.1 L,
+ * which is how the garage derives both figures from one slider.
+ */
+export const carSetupOverviewFixture = () => ({
+  carSetup: {
+    garageValues: {
+      VM_FUEL_LEVEL: {
+        key: 'VM_FUEL_LEVEL',
+        stringValue: '0.83',
+        lastSavedStringValue: '0.84',
+        // The slider index, not the quantity -- deliberately different from
+        // the number above so a parser reading the wrong field is noticed.
+        value: 82,
+        maxValue: 120,
+        minValue: 0,
+      },
+      VM_FUEL_CAPACITY: {
+        key: 'VM_FUEL_CAPACITY',
+        stringValue: '19.1L (7.8 laps)',
+        value: 0,
+      },
+      VM_VIRTUAL_ENERGY: {
+        key: 'VM_VIRTUAL_ENERGY',
+        stringValue: '23% (7.7 laps)',
+        value: 23,
+        maxValue: 101,
+      },
+    },
+  },
+});

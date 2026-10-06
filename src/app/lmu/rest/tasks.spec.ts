@@ -5,6 +5,7 @@ import {
   pitstopEstimateFixture,
   repairAndRefuelFixture,
   repairAndRefuelVirtualEnergyFixture,
+  carSetupOverviewFixture,
   sessionsFixture,
   weatherFixture,
 } from './restFixture';
@@ -352,6 +353,72 @@ describe('sessions-weather task', () => {
   it('survives a garbage payload without throwing', () => {
     [{ RACE: 7 }, null, 'nope', {}].forEach((payload) => {
       expect(() => apply('sessions-weather', payload)).not.toThrow();
+    });
+  });
+});
+
+describe('car-setup-overview task', () => {
+  it('reads the fuel ratio from the garage setup', () => {
+    const { data } = apply('car-setup-overview', carSetupOverviewFixture());
+
+    expect(data.session.fuelRatio).toBeCloseTo(0.83, 5);
+  });
+
+  it('reads the displayed number, not the slider index', () => {
+    // VM_FUEL_LEVEL carries both: stringValue "0.83" is the ratio, value 82 is
+    // where the slider sits. Reading the latter would be wrong by ~100x.
+    const { data } = apply('car-setup-overview', carSetupOverviewFixture());
+
+    expect(data.session.fuelRatio).not.toBe(82);
+    expect(data.session.fuelRatio).toBeLessThan(2);
+  });
+
+  it('relates virtual energy to litres, which is the point of it', () => {
+    // The fixture mirrors a real payload: 23% at 0.83 L/% is 19.1 L, the
+    // figure the garage shows for fuel capacity.
+    const { data } = apply('car-setup-overview', carSetupOverviewFixture());
+    const ratio = data.session.fuelRatio ?? 0;
+
+    expect(23 * ratio).toBeCloseTo(19.1, 1);
+  });
+
+  it('targets the session, since a setup value is not per-frame', () => {
+    const task = LMU_REST_TASKS.find((t) => t.id === 'car-setup-overview');
+    task?.outputs.forEach((output) => expect(output.target).toBe('session'));
+  });
+
+  it('repeats, because a setup can be edited mid-session', () => {
+    // A one-shot would go stale the moment the player changed the slider.
+    expect(
+      LMU_REST_TASKS.find((t) => t.id === 'car-setup-overview')?.mode
+    ).toBe('repeat');
+  });
+
+  it('applies nothing when the setup key is absent', () => {
+    expect(
+      apply('car-setup-overview', { carSetup: { garageValues: {} } }).applied
+    ).toEqual([]);
+  });
+
+  it('ignores a non-numeric setup string', () => {
+    const payload = {
+      carSetup: {
+        garageValues: { VM_FUEL_LEVEL: { stringValue: 'Non-adjustable' } },
+      },
+    };
+
+    expect(apply('car-setup-overview', payload).applied).toEqual([]);
+  });
+
+  it('survives a garbage payload without throwing', () => {
+    [
+      { carSetup: 7 },
+      null,
+      'nope',
+      {},
+      { carSetup: { garageValues: 3 } },
+    ].forEach((payload) => {
+      expect(() => apply('car-setup-overview', payload)).not.toThrow();
     });
   });
 });

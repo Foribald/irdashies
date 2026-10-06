@@ -80,6 +80,7 @@ const commonSessionProperties = [
   { path: 'LmuRest.timeScale', label: 'LMU Time Scale' },
   { path: 'LmuRest.maxVirtualEnergy', label: 'LMU Max Virtual Energy' },
   { path: 'LmuRest.privateQualifying', label: 'LMU Private Qualifying' },
+  { path: 'LmuRest.fuelRatio', label: 'LMU Fuel Ratio (L per % VE)' },
 ];
 
 export const TelemetryInspectorSettings = () => {

@@ -214,6 +214,17 @@ const sessionSetting = (
   apply: (data, value) => apply(data, value as number),
 });
 
+/**
+ * A garage setup value, which LMU nests under `stringValue`.
+ *
+ * These are display strings rather than numbers -- "0.83", "19.1L (7.8 laps)",
+ * "23% (7.7 laps)" -- so the leading number is what carries the data. The
+ * sibling `value` field is the slider index, not the quantity, and is no use
+ * here.
+ */
+const garageNumber = (payload: unknown, key: string): number | undefined =>
+  firstNumber(at(payload, ['carSetup', 'garageValues', key, 'stringValue']));
+
 export const LMU_REST_TASKS: readonly LmuRestTask[] = [
   {
     id: 'repair-and-refuel',
@@ -267,6 +278,26 @@ export const LMU_REST_TASKS: readonly LmuRestTask[] = [
           fourCorners(at(payload, ['wearables', 'suspension'])),
         apply: (data, value) => {
           data.cells.suspensionDamage = { value: value as number[] };
+        },
+      },
+    ],
+  },
+  {
+    id: 'car-setup-overview',
+    path: '/rest/garage/UIScreen/CarSetupOverview',
+    // Repeating, because a setup can be edited mid-session and a one-shot
+    // would go stale. The payload is the largest in the set, so this leans on
+    // the hash compare: unchanged bodies are never parsed, and the backoff
+    // carries an untouched setup out to the cap.
+    mode: 'repeat',
+    baseIntervalMs: 1000,
+    outputs: [
+      {
+        id: 'fuelRatio',
+        target: 'session',
+        parse: (payload) => garageNumber(payload, 'VM_FUEL_LEVEL'),
+        apply: (data, value) => {
+          data.session.fuelRatio = value as number;
         },
       },
     ],

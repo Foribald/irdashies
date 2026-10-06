@@ -56,6 +56,18 @@ export interface LmuRestSession {
    * numerator is mVirtualEnergy from shared memory.
    */
   maxVirtualEnergy?: number;
+  /**
+   * Litres of fuel per percent of virtual energy, from the garage setup.
+   *
+   * The conversion factor between the two budgets an energy-limited car runs
+   * on, and the only thing that relates them. A setup reading 0.83 with the
+   * virtual energy set to 23% carries 19.1 L, which is how the garage screen
+   * arrives at both figures from one slider.
+   *
+   * It is a setup value, not a measurement, so it moves only when the player
+   * edits the setup.
+   */
+  fuelRatio?: number;
   forecast?: {
     practice?: LmuWeatherNode[];
     qualify?: LmuWeatherNode[];

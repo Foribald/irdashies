@@ -126,6 +126,7 @@ const char* kRestPaths[] = {
     "/rest/garage/UIScreen/RepairAndRefuel",
     "/rest/sessions",
     "/rest/sessions/weather",
+    "/rest/garage/UIScreen/CarSetupOverview",
 };
 
 struct PendingRest {
