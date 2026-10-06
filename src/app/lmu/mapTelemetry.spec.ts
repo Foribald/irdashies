@@ -628,3 +628,69 @@ describe('mapLmuTelemetry virtual energy', () => {
     expect(t.LmuRegen).toBeUndefined();
   });
 });
+
+describe('mapLmuTelemetry class position', () => {
+  it('ranks a practice session by best lap time, within class', () => {
+    // Session 1 is practice. Best laps are 134.5, 132.8, 137.1 and the classes
+    // are [0, 0, 1], so slot 1 leads class 0 ahead of slot 0, and slot 2 is
+    // alone in class 1.
+    const t = mapLmuTelemetry(fixture());
+    const positions = t.CarIdxClassPosition.value as number[];
+
+    expect(positions).toEqual([2, 1, 1]);
+  });
+
+  it('does not simply echo the slot order', () => {
+    // The symptom this guards: a column counting 1,2,3 down the car list
+    // regardless of who is quickest.
+    const t = mapLmuTelemetry(fixture());
+    const positions = t.CarIdxClassPosition.value as number[];
+
+    expect(positions).not.toEqual([1, 2, 3]);
+  });
+
+  it('publishes a non-empty array, so the fallback is not reached', () => {
+    // Empty means useDriverPositions falls through to the qualifying grid,
+    // which under LMU practice is entry order.
+    const t = mapLmuTelemetry(fixture());
+
+    expect((t.CarIdxClassPosition.value as number[]).length).toBeGreaterThan(0);
+  });
+});
+
+describe('mapLmuTelemetry outright position', () => {
+  it('orders practice by best lap, not by the entry order LMU reports', () => {
+    // The symptom: the standings sort rows on CarIdxPosition, so while this
+    // echoed mPlace the class column was right and the list still read as
+    // car-number order. Fixture best laps are 134.5, 132.8, 137.1.
+    const t = mapLmuTelemetry(fixture());
+
+    expect(t.CarIdxPosition.value).toEqual([2, 1, 3]);
+  });
+
+  it('keeps the sim-reported places in a race', () => {
+    // mPlace already accounts for laps completed and sector order, which a
+    // best-lap sort would throw away.
+    const raw = {
+      ...fixture(),
+      session: 10,
+      vehPlaces: new Int32Array([3, 1, 2]),
+    };
+
+    const t = mapLmuTelemetry(raw);
+
+    expect(t.CarIdxPosition.value).toEqual([3, 1, 2]);
+  });
+
+  it('agrees with the class column about who is ahead', () => {
+    // Both come from one ordering pass, so they cannot disagree.
+    const t = mapLmuTelemetry(fixture());
+    const outright = t.CarIdxPosition.value as number[];
+    const inClass = t.CarIdxClassPosition.value as number[];
+
+    // Slot 1 leads class 0 and is also outright first.
+    expect(inClass[1]).toBe(1);
+    expect(outright[1]).toBe(1);
+    expect(outright[0]).toBeGreaterThan(outright[1]);
+  });
+});

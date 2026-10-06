@@ -373,18 +373,25 @@ export function mapLmuTelemetry(
     value: Array.from(raw.vehInPits, (_, carIdx) => trackLocation(raw, carIdx)),
   };
   t.CarIdxOnPitRoad = boolArr(raw.vehInPits, (v) => v === 1);
-  t.CarIdxPosition = numArr(raw.vehPlaces);
-  // LMU publishes mPlace but nothing per class, and the standings read class
-  // position. Left empty it fell through to the qualifying grid, which in
-  // practice is entry order and never changes.
-  t.CarIdxClassPosition = numArr(
-    updateLmuClassPositions(classPositionState, {
-      classes: raw.vehClass,
-      places: raw.vehPlaces,
-      bestLapTimes: raw.vehBestLapTime,
-      lapDistPcts: raw.vehLapDistPct,
-      isRace: isLmuRaceSession(raw.session),
-    })
+  // Both position channels come out of one ordering pass, which must run
+  // before either is read. LMU publishes mPlace but nothing per class, and the
+  // standings read class position; left empty it fell through to the
+  // qualifying grid, which under practice is entry order and never changes.
+  updateLmuClassPositions(classPositionState, {
+    classes: raw.vehClass,
+    places: raw.vehPlaces,
+    bestLapTimes: raw.vehBestLapTime,
+    lapDistPcts: raw.vehLapDistPct,
+    isRace: isLmuRaceSession(raw.session),
+  });
+  t.CarIdxClassPosition = numArr(classPositionState.positions);
+  // Outright position. A race takes the sim's own mPlace, which already
+  // accounts for laps and sector order; practice and qualifying take the
+  // best-lap ordering above, because LMU leaves mPlace at entry order there --
+  // and the standings sort their rows on this, so a correct class column was
+  // still being rendered in car-number order.
+  t.CarIdxPosition = numArr(
+    isLmuRaceSession(raw.session) ? raw.vehPlaces : classPositionState.overall
   );
   t.CarIdxClass = occupiedArr(raw.vehClass, raw, -1);
   t.CarIdxF2Time = numArr(raw.vehTimeBehindLeader);

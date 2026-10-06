@@ -24,8 +24,16 @@
  */
 
 export interface LmuClassPositionState {
-  /** Positions by car slot, 0 where unknown. Reused across frames. */
+  /** In-class positions by car slot, 0 where unknown. Reused across frames. */
   positions: number[];
+  /**
+   * Outright positions by car slot, from the same ordering.
+   *
+   * The standings sort their rows on this, not on the in-class position, so a
+   * correct class column rendered in mPlace order still reads as wrong. Free
+   * to produce -- it is the index within the pass that already happened.
+   */
+  overall: number[];
   /** Fingerprint of the inputs that produced `positions`. */
   fingerprint: number;
   /** Scratch list of contending slots, reused so a frame allocates nothing. */
@@ -34,6 +42,7 @@ export interface LmuClassPositionState {
 
 export const createLmuClassPositionState = (): LmuClassPositionState => ({
   positions: [],
+  overall: [],
   fingerprint: 0,
   order: [],
 });
@@ -42,6 +51,7 @@ export const resetLmuClassPositionState = (
   state: LmuClassPositionState
 ): void => {
   state.positions.length = 0;
+  state.overall.length = 0;
   state.order.length = 0;
   state.fingerprint = 0;
 };
@@ -102,6 +112,7 @@ export function updateLmuClassPositions(
   const count = classes?.length ?? 0;
   if (count === 0 || !classes) {
     state.positions.length = 0;
+    state.overall.length = 0;
     state.fingerprint = 0;
     return state.positions;
   }
@@ -112,9 +123,11 @@ export function updateLmuClassPositions(
   }
   state.fingerprint = fingerprint;
 
-  const { positions, order } = state;
+  const { positions, overall, order } = state;
   positions.length = count;
   positions.fill(0);
+  overall.length = count;
+  overall.fill(0);
 
   order.length = 0;
   for (let carIdx = 0; carIdx < count; carIdx += 1) {
@@ -145,12 +158,13 @@ export function updateLmuClassPositions(
   });
 
   const rankByClass = new Map<number, number>();
-  for (const carIdx of order) {
+  order.forEach((carIdx, index) => {
     const classId = classes[carIdx] ?? 0;
     const rank = (rankByClass.get(classId) ?? 0) + 1;
     rankByClass.set(classId, rank);
     positions[carIdx] = rank;
-  }
+    overall[carIdx] = index + 1;
+  });
 
   return positions;
 }
