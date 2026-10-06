@@ -5,7 +5,11 @@ import {
   TIMED_SESSION_LAPS,
   type Telemetry,
 } from '@irdashies/types';
-import { classifyLmuBlindSpot, deriveLmuRelativePositions } from './proximity';
+import {
+  createLmuRelativePositionsBuffer,
+  deriveLmuRelativePositions,
+  summariseLmuBlindSpot,
+} from './proximity';
 import { lapTimeOrAbsent } from './sentinels';
 import { estimateLmuLapDistPct, type LmuLapDistanceState } from './lapDistance';
 import {
@@ -101,8 +105,20 @@ const lapDistPctArr = (v: ArrayLike<number> | undefined) => ({
     : [],
 });
 
+/**
+ * Reused across frames. This runs at the poll rate, so the four arrays it
+ * fills were ~250 allocations a second; and the derivation used to run three
+ * times per frame -- here, again for CarLeftRight, and once more in the bridge
+ * -- each pass rotating and taking an atan2 per car. It now runs once.
+ */
+const relativePositionsBuffer = createLmuRelativePositionsBuffer();
+
 export function mapLmuCarLeftRight(raw: Raw): CarLeftRight | null {
-  return classifyLmuBlindSpot(deriveLmuRelativePositions(raw));
+  return (
+    summariseLmuBlindSpot(
+      deriveLmuRelativePositions(raw, relativePositionsBuffer)
+    )?.state ?? null
+  );
 }
 
 function sessionFlags(raw: Raw): number {
@@ -225,7 +241,11 @@ export function mapLmuTelemetry(
   // mapper has always had.
   const lapDistPct = Math.min(1, Math.max(0, estimatedLapDistPct));
   const steeringMaxRad = ((raw.visualSteeringWheelRange ?? 0) * Math.PI) / 360;
-  const relativePositions = deriveLmuRelativePositions(raw);
+  const relativePositions = deriveLmuRelativePositions(
+    raw,
+    relativePositionsBuffer
+  );
+  const blindSpot = summariseLmuBlindSpot(relativePositions);
 
   // Session-level
   // Both clocks come from the player's mElapsedTime, measured at 100 Hz,
@@ -301,7 +321,7 @@ export function mapLmuTelemetry(
   t.PlayerCarClass = num(raw.vehClass[playerIdx] ?? 0);
   t.CamCarIdx = num(playerIdx);
   t.PlayerCarPitSvStatus = num(0);
-  t.CarLeftRight = num(mapLmuCarLeftRight(raw) ?? CarLeftRight.Off);
+  t.CarLeftRight = num(blindSpot?.state ?? CarLeftRight.Off);
 
   // Per-car
   t.CarIdxLap = occupiedArr(raw.vehTotalLaps, raw, -1);
@@ -354,6 +374,16 @@ export function mapLmuTelemetry(
   t.LmuCarIdxRelativeLateral = numArr(relativePositions?.lateral);
   t.LmuCarIdxRelativeLongitudinal = numArr(relativePositions?.longitudinal);
   t.LmuCarIdxRelativeHeading = numArr(relativePositions?.heading);
+  // Fore(+)/aft(-) metres of the nearest car each side, straight from the
+  // 100 Hz world positions. A display of the car's position alongside reads
+  // this instead of subtracting lap-distance percentages, which the 5 Hz
+  // scoring block quantises far more coarsely than such a display spans.
+  t.LmuBlindSpotLeftLongitudinal = {
+    value: [blindSpot?.leftLongitudinalM ?? null],
+  };
+  t.LmuBlindSpotRightLongitudinal = {
+    value: [blindSpot?.rightLongitudinalM ?? null],
+  };
 
   // LMU reports steering as a fraction of the full wheel range; iRacing uses radians.
   t.SteeringWheelAngle = num(-(raw.filteredSteering ?? 0) * steeringMaxRad);

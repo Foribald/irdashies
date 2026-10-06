@@ -18,7 +18,8 @@ import {
   LMU_DISCONNECT_GRACE_MS,
   shouldHoldLmuRunningState,
 } from '../../lmu/runningState';
-import { mapLmuCarLeftRight, mapLmuTelemetry } from '../../lmu/mapTelemetry';
+import { mapLmuTelemetry } from '../../lmu/mapTelemetry';
+import { lmuRelativePositionsAvailable } from '../../lmu/proximity';
 import {
   createLmuLapDistanceState,
   resetLmuLapDistanceState,
@@ -269,12 +270,11 @@ export async function publishLmuSDKEvents(
         }
       }
 
-      const blindSpotDataIssue =
-        mapLmuCarLeftRight(raw) === null
-          ? 'vehicle world positions or player orientation are unavailable'
-          : raw.lapDist <= 0
-            ? `track length is invalid (${raw.lapDist} m)`
-            : null;
+      const blindSpotDataIssue = !lmuRelativePositionsAvailable(raw)
+        ? 'vehicle world positions or player orientation are unavailable'
+        : raw.lapDist <= 0
+          ? `track length is invalid (${raw.lapDist} m)`
+          : null;
       if (blindSpotDataIssue !== lastBlindSpotDataIssue) {
         lastBlindSpotDataIssue = blindSpotDataIssue;
         if (blindSpotDataIssue) {

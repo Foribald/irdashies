@@ -11,6 +11,9 @@ export type Telemetry = {
   LmuCarIdxRelativeLateral?: TelemetryVar<number[]>;
   LmuCarIdxRelativeLongitudinal?: TelemetryVar<number[]>;
   LmuCarIdxRelativeHeading?: TelemetryVar<number[]>;
+  /** Fore(+)/aft(-) metres of the nearest car alongside; null when clear. */
+  LmuBlindSpotLeftLongitudinal?: TelemetryVar<(number | null)[]>;
+  LmuBlindSpotRightLongitudinal?: TelemetryVar<(number | null)[]>;
 };
 /**
  * What SessionLapsRemain and SessionLapsTotal carry when the session has no
