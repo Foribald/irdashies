@@ -10,6 +10,7 @@ import {
   LMU_CLASS_COLOURS,
   LMU_MANUFACTURERS,
 } from '@irdashies/types';
+import { fnv1a32 } from './hash';
 
 /**
  * LMU's pit and rolling-start speed limit, km/h.
@@ -48,12 +49,7 @@ export function deriveLmuShiftLightRpm(engineMaxRpm?: number) {
 }
 
 export function resolveLmuTrackId(trackName: string): number {
-  let hash = 2166136261;
-  for (const character of trackName.trim().toLowerCase()) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return LMU_TRACK_ID_OFFSET + (hash >>> 0);
+  return LMU_TRACK_ID_OFFSET + fnv1a32(trackName.trim().toLowerCase());
 }
 
 export function resolveLmuCarId(vehicleModel: string): number {
