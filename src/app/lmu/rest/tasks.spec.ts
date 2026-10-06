@@ -5,6 +5,8 @@ import {
   pitstopEstimateFixture,
   repairAndRefuelFixture,
   repairAndRefuelVirtualEnergyFixture,
+  sessionsFixture,
+  weatherFixture,
 } from './restFixture';
 
 const taskById = (id: string) => {
@@ -249,6 +251,107 @@ describe('repair-and-refuel task', () => {
       { wearables: [] },
     ].forEach((payload) => {
       expect(() => apply('repair-and-refuel', payload)).not.toThrow();
+    });
+  });
+});
+
+describe('sessions task', () => {
+  it('reads the session settings LMU nests under currentValue', () => {
+    const { data } = apply('sessions', sessionsFixture());
+
+    expect(data.session.timeScale).toBe(6);
+    expect(data.session.privateQualifying).toBe(true);
+  });
+
+  it('reads a zero private-qualifying flag as false', () => {
+    const { data } = apply('sessions', {
+      ...sessionsFixture(),
+      SESSSET_private_qual: { currentValue: 0 },
+    });
+
+    expect(data.session.privateQualifying).toBe(false);
+  });
+
+  it('is fetched once, since session settings cannot change mid-session', () => {
+    expect(LMU_REST_TASKS.find((task) => task.id === 'sessions')?.mode).toBe(
+      'once'
+    );
+  });
+
+  it('targets the session, so it forces a republish', () => {
+    // These only reach widgets through the session snapshot, which is gated by
+    // the signature -- so a telemetry target here would never be published.
+    LMU_REST_TASKS.find((task) => task.id === 'sessions')?.outputs.forEach(
+      (output) => expect(output.target).toBe('session')
+    );
+  });
+
+  it('applies nothing for a payload missing the settings', () => {
+    expect(apply('sessions', { other: 1 }).applied).toEqual([]);
+  });
+});
+
+describe('sessions-weather task', () => {
+  it('reads five forecast points per session type', () => {
+    const { data } = apply('sessions-weather', weatherFixture());
+
+    expect(data.session.forecast?.practice).toHaveLength(5);
+    expect(data.session.forecast?.qualify).toHaveLength(5);
+    expect(data.session.forecast?.race).toHaveLength(5);
+  });
+
+  it('spaces the points evenly across the session', () => {
+    const { data } = apply('sessions-weather', weatherFixture());
+
+    expect(data.session.forecast?.race?.map((n) => n.start)).toEqual([
+      0, 0.2, 0.4, 0.6, 0.8,
+    ]);
+  });
+
+  it('normalises rain chance from a percentage to a fraction', () => {
+    // So no consumer has to know which convention it arrived in.
+    const { data } = apply('sessions-weather', weatherFixture());
+    const race = data.session.forecast?.race ?? [];
+
+    expect(race[0].rainChance).toBeCloseTo(0.3, 5);
+    expect(race[2].rainChance).toBe(1);
+  });
+
+  it('clamps a rain chance outside 0..100', () => {
+    const payload = weatherFixture();
+    payload.RACE.START.WNV_RAIN_CHANCE.currentValue = 150;
+    payload.RACE.NODE_25.WNV_RAIN_CHANCE.currentValue = -20;
+
+    const { data } = apply('sessions-weather', payload);
+    const race = data.session.forecast?.race ?? [];
+
+    expect(race[0].rainChance).toBe(1);
+    expect(race[1].rainChance).toBe(0);
+  });
+
+  it('keeps temperature and sky type as reported', () => {
+    const { data } = apply('sessions-weather', weatherFixture());
+    const race = data.session.forecast?.race ?? [];
+
+    expect(race[2].temperature).toBe(18);
+    expect(race[2].skyType).toBe(5);
+  });
+
+  it('rejects a partial forecast rather than publishing a cliff', () => {
+    // Four points rendered as five would read as a sudden change at the end.
+    const payload = weatherFixture() as Record<string, unknown>;
+    delete (payload.RACE as Record<string, unknown>).FINISH;
+
+    const { data } = apply('sessions-weather', payload);
+
+    expect(data.session.forecast?.race).toBeUndefined();
+    // The other session types are independent and still land.
+    expect(data.session.forecast?.practice).toHaveLength(5);
+  });
+
+  it('survives a garbage payload without throwing', () => {
+    [{ RACE: 7 }, null, 'nope', {}].forEach((payload) => {
+      expect(() => apply('sessions-weather', payload)).not.toThrow();
     });
   });
 });

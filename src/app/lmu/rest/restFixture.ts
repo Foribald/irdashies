@@ -49,3 +49,41 @@ export const repairAndRefuelVirtualEnergyFixture = () => ({
     ],
   },
 });
+
+/** GET /rest/sessions */
+export const sessionsFixture = () => ({
+  SESSSET_race_timescale: { currentValue: 6 },
+  SESSSET_private_qual: { currentValue: 1 },
+});
+
+/** One forecast point, as LMU nests it. */
+const node = (sky: number, temp: number, rainPercent: number) => ({
+  WNV_SKY: { currentValue: sky },
+  WNV_TEMPERATURE: { currentValue: temp },
+  WNV_RAIN_CHANCE: { currentValue: rainPercent },
+});
+
+/** GET /rest/sessions/weather */
+export const weatherFixture = () => ({
+  PRACTICE: {
+    START: node(1, 22, 0),
+    NODE_25: node(1, 23, 10),
+    NODE_50: node(2, 23, 25),
+    NODE_75: node(3, 22, 60),
+    FINISH: node(4, 21, 90),
+  },
+  QUALIFY: {
+    START: node(1, 24, 5),
+    NODE_25: node(1, 24, 5),
+    NODE_50: node(1, 25, 5),
+    NODE_75: node(1, 25, 10),
+    FINISH: node(1, 24, 10),
+  },
+  RACE: {
+    START: node(2, 20, 30),
+    NODE_25: node(3, 19, 55),
+    NODE_50: node(5, 18, 100),
+    NODE_75: node(4, 18, 80),
+    FINISH: node(2, 19, 40),
+  },
+});

@@ -1,3 +1,4 @@
+import type { LmuWeatherNode } from '@irdashies/types';
 import type { LmuRestData } from './state';
 
 /**
@@ -143,6 +144,76 @@ const refuelTarget = (
   return undefined;
 };
 
+/**
+ * One session's forecast, as five points across its length.
+ *
+ * LMU names the points START, NODE_25, NODE_50, NODE_75, FINISH, so `start` is
+ * just the index scaled to a fraction of the session. Rain chance arrives as a
+ * percentage and is normalised to a 0..1 fraction here, clamped, so a
+ * consumer never has to know which convention it came in.
+ *
+ * All five or nothing: a partial forecast would render as a cliff rather than
+ * a gap.
+ */
+const FORECAST_NODES = ['START', 'NODE_25', 'NODE_50', 'NODE_75', 'FINISH'];
+
+const forecast = (payload: unknown): LmuWeatherNode[] | undefined => {
+  const nodes: LmuWeatherNode[] = [];
+  for (let index = 0; index < FORECAST_NODES.length; index += 1) {
+    const node = at(payload, [FORECAST_NODES[index]]);
+    const skyType = finiteNumber(at(node, ['WNV_SKY', 'currentValue']));
+    const temperature = finiteNumber(
+      at(node, ['WNV_TEMPERATURE', 'currentValue'])
+    );
+    const rawChance = finiteNumber(
+      at(node, ['WNV_RAIN_CHANCE', 'currentValue'])
+    );
+    if (
+      skyType === undefined ||
+      temperature === undefined ||
+      rawChance === undefined
+    ) {
+      return undefined;
+    }
+    nodes.push({
+      start: Math.round(index * 0.2 * 10) / 10,
+      skyType: Math.trunc(skyType),
+      temperature,
+      rainChance: Math.min(Math.max(rawChance * 0.01, 0), 1),
+    });
+  }
+  return nodes;
+};
+
+/** A forecast for one session type, landed under LmuRest.forecast. */
+const forecastFor = (
+  id: string,
+  key: string,
+  slot: 'practice' | 'qualify' | 'race'
+): LmuRestOutput => ({
+  id,
+  target: 'session',
+  parse: (payload) => forecast(at(payload, [key])),
+  apply: (data, value) => {
+    data.session.forecast = {
+      ...data.session.forecast,
+      [slot]: value as LmuWeatherNode[],
+    };
+  },
+});
+
+/** A session setting, which LMU nests under `currentValue`. */
+const sessionSetting = (
+  id: string,
+  key: string,
+  apply: (data: LmuRestData, value: number) => void
+): LmuRestOutput => ({
+  id,
+  target: 'session',
+  parse: (payload) => finiteNumber(at(payload, [key, 'currentValue'])),
+  apply: (data, value) => apply(data, value as number),
+});
+
 export const LMU_REST_TASKS: readonly LmuRestTask[] = [
   {
     id: 'repair-and-refuel',
@@ -198,6 +269,37 @@ export const LMU_REST_TASKS: readonly LmuRestTask[] = [
           data.cells.suspensionDamage = { value: value as number[] };
         },
       },
+    ],
+  },
+  {
+    id: 'sessions',
+    path: '/rest/sessions',
+    // Session settings cannot change mid-session, so this is fetched once per
+    // activation and again on a track change.
+    mode: 'once',
+    baseIntervalMs: 1000,
+    outputs: [
+      sessionSetting('timeScale', 'SESSSET_race_timescale', (data, value) => {
+        data.session.timeScale = value;
+      }),
+      sessionSetting(
+        'privateQualifying',
+        'SESSSET_private_qual',
+        (data, value) => {
+          data.session.privateQualifying = value !== 0;
+        }
+      ),
+    ],
+  },
+  {
+    id: 'sessions-weather',
+    path: '/rest/sessions/weather',
+    mode: 'once',
+    baseIntervalMs: 1000,
+    outputs: [
+      forecastFor('forecastPractice', 'PRACTICE', 'practice'),
+      forecastFor('forecastQualify', 'QUALIFY', 'qualify'),
+      forecastFor('forecastRace', 'RACE', 'race'),
     ],
   },
   {
