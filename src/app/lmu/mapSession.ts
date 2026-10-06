@@ -187,6 +187,48 @@ function sessionType(session: number): string {
  * Fields with no LMU equivalent keep safe defaults so widgets degrade
  * gracefully instead of crashing on missing data.
  */
+
+/**
+ * Percent of virtual energy a full tank corresponds to.
+ *
+ * The garage expresses fuel as a ratio of litres per percent of virtual
+ * energy, so a hundred percent is the whole tank.
+ */
+const FULL_VIRTUAL_ENERGY_PCT = 100;
+
+/**
+ * The player's fuel tank, in litres.
+ *
+ * Normally LMU's own mFuelCapacity. For LMGT3 that figure is wrong, and the
+ * garage setup carries the answer instead: fuelRatio is litres per percent of
+ * virtual energy, so a full tank is a hundred times it -- 0.83 becomes 83 L.
+ *
+ * Gated on the class deliberately. The ratio relationship is generic and could
+ * replace mFuelCapacity for every car, but that figure has been confirmed
+ * correct for LMP2, and overriding something every fuel projection depends on
+ * across all classes on the strength of one class's evidence would be
+ * guessing. Widen it per class as each one is actually checked.
+ *
+ * Falls back to mFuelCapacity whenever the ratio is missing: the REST API may
+ * not be answering, and the setup screen is not served at every moment.
+ */
+function resolveLmuFuelCapacityLtr(
+  raw: Raw,
+  playerClassName: string | undefined,
+  rest: LmuRestSession | undefined
+): number {
+  const ratio = rest?.fuelRatio;
+  if (
+    lmuCanonicalClass(playerClassName) === 'LMGT3' &&
+    ratio !== undefined &&
+    Number.isFinite(ratio) &&
+    ratio > 0
+  ) {
+    return ratio * FULL_VIRTUAL_ENERGY_PCT;
+  }
+  return raw.fuelCapacity ?? 0;
+}
+
 export function mapLmuSession(
   raw: Raw,
   trackMap?: LmuTrackMap | null,
@@ -464,10 +506,14 @@ export function mapLmuSession(
       // it would silently produce zero or divide by it. Give it a real value
       // only once a source for one exists.
       DriverCarFuelKgPerLtr: 0,
-      // 0 when LMU does not report a capacity. The fuel calculator rejects a
-      // non-positive tank size and falls back to estimating one, so this
+      // 0 when neither source reports a capacity. The fuel calculator rejects
+      // a non-positive tank size and falls back to estimating one, so this
       // degrades rather than lying -- see calculateRealTankCapacity.
-      DriverCarFuelMaxLtr: raw.fuelCapacity ?? 0,
+      DriverCarFuelMaxLtr: resolveLmuFuelCapacityLtr(
+        raw,
+        playerDriver?.className,
+        rest
+      ),
       DriverCarMaxFuelPct: 1,
       DriverCarGearNumForward: raw.maxGears ?? 6,
       DriverCarGearNeutral: 0,

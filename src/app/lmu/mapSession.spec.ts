@@ -410,3 +410,61 @@ describe('mapLmuSession REST session values', () => {
     expect(s.LmuRest?.timeScale).toBe(2);
   });
 });
+
+describe('mapLmuSession fuel capacity', () => {
+  /** The fixture's player is the LMGT3 car; see rawSessionFixture. */
+  const playerClassOf = (raw: ReturnType<typeof fixture>) =>
+    raw.drivers.find((d) => d.isPlayer)?.className;
+
+  it('derives an LMGT3 tank from the fuel ratio, not mFuelCapacity', () => {
+    // 0.83 L per percent of virtual energy is 83 L at a full 100%.
+    const raw = { ...fixture(), fuelCapacity: 100 };
+    expect(playerClassOf(raw)).toBe('GT3');
+
+    const s = mapLmuSession(raw, null, { fuelRatio: 0.83 });
+
+    expect(s.DriverInfo.DriverCarFuelMaxLtr).toBeCloseTo(83, 5);
+  });
+
+  it('leaves other classes on the capacity LMU reports', () => {
+    // mFuelCapacity is confirmed correct for LMP2, so the override is scoped
+    // rather than applied to everything.
+    const raw = { ...fixture(), fuelCapacity: 100 };
+    raw.drivers = raw.drivers.map((d) =>
+      d.isPlayer ? { ...d, className: 'LMP2_ELMS' } : d
+    );
+
+    const s = mapLmuSession(raw, null, { fuelRatio: 0.83 });
+
+    expect(s.DriverInfo.DriverCarFuelMaxLtr).toBe(100);
+  });
+
+  it('falls back for LMGT3 when no ratio was read', () => {
+    // The REST API may not be answering, and the setup screen is not always
+    // served -- a wrong tank is better than no tank at all here.
+    const raw = { ...fixture(), fuelCapacity: 100 };
+
+    expect(mapLmuSession(raw).DriverInfo.DriverCarFuelMaxLtr).toBe(100);
+    expect(mapLmuSession(raw, null, {}).DriverInfo.DriverCarFuelMaxLtr).toBe(
+      100
+    );
+  });
+
+  it('ignores a non-positive or non-finite ratio', () => {
+    const raw = { ...fixture(), fuelCapacity: 100 };
+
+    [0, -1, Number.NaN, Number.POSITIVE_INFINITY].forEach((fuelRatio) => {
+      expect(
+        mapLmuSession(raw, null, { fuelRatio }).DriverInfo.DriverCarFuelMaxLtr
+      ).toBe(100);
+    });
+  });
+
+  it('reports 0 when neither source has a capacity', () => {
+    // The fuel calculator rejects a non-positive tank and estimates one, so
+    // this degrades rather than lying.
+    const raw = { ...fixture(), fuelCapacity: undefined };
+
+    expect(mapLmuSession(raw).DriverInfo.DriverCarFuelMaxLtr).toBe(0);
+  });
+});
