@@ -434,6 +434,204 @@ void writeBounded(char* field, std::size_t size, const std::string& value) {
   std::memcpy(field, value.data(), std::min(value.size(), size - 1));
 }
 
+/** Every occurrence, not just the first: a name can appear more than once. */
+std::string replaceAll(
+    std::string text,
+    const std::string& from,
+    const std::string& to) {
+  if (from.empty()) return text;
+  std::size_t at = 0;
+  while ((at = text.find(from, at)) != std::string::npos) {
+    text.replace(at, from.size(), to);
+    at += to.size();
+  }
+  return text;
+}
+
+/**
+ * Decodes one UTF-8 sequence, returning the code point and its length.
+ *
+ * Needed because a JSON writer may escape a non-ASCII character as \uXXXX,
+ * which is per code point rather than per byte -- so finding the escaped form
+ * of a name means knowing what its bytes decode to. A malformed sequence is
+ * reported as a single byte, so a name the sim wrote in some other encoding
+ * degrades to not matching rather than to a crash.
+ */
+std::uint32_t decodeUtf8(
+    const std::string& text,
+    std::size_t at,
+    std::size_t& length) {
+  const auto byte = static_cast<unsigned char>(text[at]);
+  const auto continuation = [&](std::size_t offset) {
+    return at + offset < text.size() &&
+           (static_cast<unsigned char>(text[at + offset]) & 0xC0) == 0x80;
+  };
+  const auto tail = [&](std::size_t offset) {
+    return static_cast<std::uint32_t>(
+        static_cast<unsigned char>(text[at + offset]) & 0x3F);
+  };
+
+  if (byte < 0x80) {
+    length = 1;
+    return byte;
+  }
+  if ((byte & 0xE0) == 0xC0 && continuation(1)) {
+    length = 2;
+    return ((byte & 0x1Fu) << 6) | tail(1);
+  }
+  if ((byte & 0xF0) == 0xE0 && continuation(1) && continuation(2)) {
+    length = 3;
+    return ((byte & 0x0Fu) << 12) | (tail(1) << 6) | tail(2);
+  }
+  if ((byte & 0xF8) == 0xF0 && continuation(1) && continuation(2) &&
+      continuation(3)) {
+    length = 4;
+    return ((byte & 0x07u) << 18) | (tail(1) << 12) | (tail(2) << 6) | tail(3);
+  }
+  length = 1;
+  return byte;
+}
+
+/** Appends one \uXXXX escape, in the hex case asked for. */
+void appendUnicodeEscape(
+    std::string& out,
+    std::uint32_t code,
+    bool upperHex) {
+  const char* digits = upperHex ? "0123456789ABCDEF" : "0123456789abcdef";
+  out += "\\u";
+  for (int shift = 12; shift >= 0; shift -= 4) {
+    out += digits[(code >> shift) & 0xF];
+  }
+}
+
+/**
+ * The name as it would appear inside a JSON string.
+ *
+ * `escapeNonAscii` picks between the two forms a writer may have produced:
+ * the characters as literal UTF-8, which is what the app's own fixtures carry,
+ * or every non-ASCII code point as \uXXXX, which is what a stricter writer
+ * emits. Both are searched for, because the tape holds whatever LMU sent and
+ * a name that only matched one form would be left in the file.
+ *
+ * The structural characters are escaped either way, since a literal quote or
+ * backslash cannot appear in a JSON string at all.
+ */
+std::string jsonEncoded(
+    const std::string& text,
+    bool escapeNonAscii,
+    bool upperHex) {
+  std::string out;
+  out.reserve(text.size() + 8);
+  for (std::size_t i = 0; i < text.size();) {
+    std::size_t length = 1;
+    const std::uint32_t code = decodeUtf8(text, i, length);
+    if (code == '"') {
+      out += "\\\"";
+    } else if (code == '\\') {
+      out += "\\\\";
+    } else if (code == '\b') {
+      out += "\\b";
+    } else if (code == '\f') {
+      out += "\\f";
+    } else if (code == '\n') {
+      out += "\\n";
+    } else if (code == '\r') {
+      out += "\\r";
+    } else if (code == '\t') {
+      out += "\\t";
+    } else if (code < 0x20) {
+      appendUnicodeEscape(out, code, upperHex);
+    } else if (code < 0x80 || !escapeNonAscii) {
+      out.append(text, i, length);
+    } else if (code <= 0xFFFF) {
+      appendUnicodeEscape(out, code, upperHex);
+    } else {
+      // Outside the basic plane JSON uses a surrogate pair, the same way a
+      // UTF-16 string would.
+      const std::uint32_t offset = code - 0x10000;
+      appendUnicodeEscape(out, 0xD800 + (offset >> 10), upperHex);
+      appendUnicodeEscape(out, 0xDC00 + (offset & 0x3FF), upperHex);
+    }
+    i += length;
+  }
+  return out;
+}
+
+/** One name, every spelling to look for, and what replaces it. */
+struct NameRewrite {
+  std::string original;
+  /** The encodings a JSON writer could have used for `original`. */
+  std::vector<std::string> forms;
+  /** The pseudonym, encoded so it is still a valid JSON string. */
+  std::string replacement;
+};
+
+/**
+ * Builds the rewrite list, longest original first.
+ *
+ * Longest first so a name that contains another is replaced whole rather than
+ * having its tail rewritten by the shorter one.
+ */
+std::vector<NameRewrite> buildNameRewrites(
+    const std::vector<std::string>& originals,
+    const std::map<std::string, std::string>& assigned) {
+  std::vector<NameRewrite> rewrites;
+  for (const auto& original : originals) {
+    const auto found = assigned.find(original);
+    if (found == assigned.end()) continue;
+
+    NameRewrite rewrite;
+    rewrite.original = original;
+    // The replacement stays literal UTF-8: valid JSON whichever form the
+    // match took, so one encoding covers every candidate.
+    rewrite.replacement = jsonEncoded(found->second, false, false);
+    for (const auto& form : {
+             original,
+             jsonEncoded(original, false, false),
+             jsonEncoded(original, true, false),
+             jsonEncoded(original, true, true),
+         }) {
+      if (form.empty()) continue;
+      if (std::find(rewrite.forms.begin(), rewrite.forms.end(), form) ==
+          rewrite.forms.end()) {
+        rewrite.forms.push_back(form);
+      }
+    }
+    rewrites.push_back(std::move(rewrite));
+  }
+
+  std::sort(
+      rewrites.begin(),
+      rewrites.end(),
+      [](const NameRewrite& a, const NameRewrite& b) {
+        return a.original.size() > b.original.size();
+      });
+  return rewrites;
+}
+
+/** Replaces every spelling of every name in a JSON body. */
+std::string rewriteNamesInJson(
+    const std::string& body,
+    const std::vector<NameRewrite>& rewrites) {
+  std::string out = body;
+  for (const auto& rewrite : rewrites) {
+    for (const auto& form : rewrite.forms) {
+      out = replaceAll(out, form, rewrite.replacement);
+    }
+  }
+  return out;
+}
+
+/** A name and enough of its surroundings to show what carried it. */
+std::string contextAround(
+    const std::string& text,
+    std::size_t at,
+    std::size_t length) {
+  const std::size_t from = at > 30 ? at - 30 : 0;
+  const std::size_t to = std::min(text.size(), at + length + 30);
+  return text.substr(from, to - from);
+}
+
 /**
  * Loads the replacement names.
  *
@@ -637,6 +835,15 @@ int runAnonymise(const Options& options) {
   }
 
   NamePool pool(std::move(names));
+  // Assign every pseudonym before a single record is written. The REST bodies
+  // need the whole mapping up front: one can be stored before the snapshot
+  // that first carries the name in it, and the replacement there has to be the
+  // same one the snapshots get. Walking `originals` in order keeps the
+  // assignment identical to what the lazy path produced, so an anonymised tape
+  // is still reproducible.
+  for (const auto& original : originals) pool.pseudonymFor(original);
+  const auto rewrites = buildNameRewrites(originals, pool.assigned());
+
   TapeWriter writer;
   if (!writer.open(options.outputPath, error)) {
     std::cerr << error << "\n";
@@ -646,8 +853,10 @@ int runAnonymise(const Options& options) {
   std::uint64_t snapshots = 0;
   std::uint64_t disconnects = 0;
   std::uint64_t restRecords = 0;
+  std::uint64_t restRewritten = 0;
   std::uint64_t restLeaks = 0;
   std::set<std::string> leakingPaths;
+  std::map<std::string, std::string> leakExamples;
   while (true) {
     const auto result =
         reader.readNext(record, snapshot, restPath, restBody, error);
@@ -669,21 +878,38 @@ int runAnonymise(const Options& options) {
         ok = writer.appendDisconnect(record.elapsedMicros, error);
         ++disconnects;
         break;
-      case RecordKind::Rest:
-        // Copied through: this is LMU's own JSON and rewriting it would mean
-        // parsing a shape that changes between builds. Reported instead, so a
-        // body that does carry a name is a decision rather than a surprise.
-        for (const auto& original : originals) {
-          if (original.size() >= 3 &&
-              restBody.find(original) != std::string::npos) {
-            ++restLeaks;
-            leakingPaths.insert(restPath);
-            break;
+      case RecordKind::Rest: {
+        // The garage screens carry names as ordinary content -- a setup named
+        // after the player, the pit menu's driver-swap list -- so copying a
+        // body through verbatim left the name in the tape.
+        //
+        // Rewritten as text rather than parsed: substituting a name needs no
+        // knowledge of the shape, which is what made parsing look necessary in
+        // the first place. Every JSON spelling of the name is tried, so an
+        // escaped one is not missed.
+        const std::string rewritten = rewriteNamesInJson(restBody, rewrites);
+        if (rewritten != restBody) ++restRewritten;
+        // Anything still present survived all of them: a name in an encoding
+        // not covered here, or one the sim spells differently in JSON than in
+        // the scoring block. Reported with its surroundings, so it is a
+        // decision rather than a mystery.
+        for (const auto& rewrite : rewrites) {
+          if (rewrite.original.size() < 3) continue;
+          const auto at = rewritten.find(rewrite.original);
+          if (at == std::string::npos) continue;
+          ++restLeaks;
+          leakingPaths.insert(restPath);
+          if (leakExamples.find(rewrite.original) == leakExamples.end()) {
+            leakExamples.emplace(
+                rewrite.original,
+                contextAround(rewritten, at, rewrite.original.size()));
           }
+          break;
         }
-        ok = writer.appendRest(restPath, restBody, record.elapsedMicros, error);
+        ok = writer.appendRest(restPath, rewritten, record.elapsedMicros, error);
         ++restRecords;
         break;
+      }
       default:
         break;
     }
@@ -702,7 +928,8 @@ int runAnonymise(const Options& options) {
             << "Wrote:           " << options.outputPath << "\n"
             << "Snapshots:       " << snapshots << "\n"
             << "Disconnects:     " << disconnects << "\n"
-            << "REST records:    " << restRecords << "\n"
+            << "REST records:    " << restRecords << " (" << restRewritten
+            << " rewritten)\n"
             << "Names replaced:  " << pool.assigned().size() << "\n";
   for (const auto& entry : pool.assigned()) {
     std::cout << "  " << entry.first << " -> " << entry.second << "\n";
@@ -712,6 +939,12 @@ int runAnonymise(const Options& options) {
               << " REST record(s) still carry an original name:\n";
     for (const auto& path : leakingPaths) {
       std::cout << "  " << path << "\n";
+    }
+    // The surrounding text is the whole point of reporting it: it says which
+    // field carried the name, which is what deciding the next move needs.
+    for (const auto& example : leakExamples) {
+      std::cout << "  " << example.first << " in: ..." << example.second
+                << "...\n";
     }
   }
   return 0;
@@ -842,9 +1075,16 @@ int runFixture(const Options& options) {
       scoring.mID = car;
       scoring.mIsPlayer = car == 0 ? 1 : 0;
       scoring.mPlace = static_cast<std::uint8_t>(car + 1);
+      // The rival's name is deliberately not pure ASCII -- "Sebastien" with
+      // an accented e, written as explicit UTF-8 bytes so the source encoding
+      // cannot change what is recorded. Real grids are full of such names, and
+      // they are the ones a JSON writer may escape as é, which is what
+      // anonymise has to match.
       std::strncpy(
           scoring.mDriverName,
-          car == 0 ? "Synthetic Player" : "Synthetic Rival",
+          // The literal is split because "bastien" would otherwise be read as
+          // a continuation of the hex escape.
+          car == 0 ? "Synthetic Player" : "S\xc3\xa9" "bastien Rival",
           sizeof(scoring.mDriverName) - 1);
       scoring.mLapDist = std::fmod(seconds * 60.0 + car * 100.0, 7004.0);
       scoring.mTotalLaps = static_cast<std::int32_t>(seconds / 90.0);
@@ -893,6 +1133,22 @@ int runFixture(const Options& options) {
              << (30.0 + static_cast<double>(frame) * 0.01) << " L\"}]}]}}";
       if (!writer.appendRest(
               "/rest/garage/UIScreen/RepairAndRefuel", refuel.str(), elapsed,
+              error)) {
+        std::cerr << error << "\n";
+        return 1;
+      }
+
+      // The garage screen, which is where names turn up in a real capture: a
+      // setup named after the player, and the driver-swap list. One name is
+      // literal and one is \u-escaped, which are the two spellings a JSON
+      // writer may use and both of which anonymise has to find.
+      const std::string setup =
+          "{\"SETUP_OVERVIEW\":{\"VM_FUEL_LEVEL\":"
+          "{\"stringValue\":\"0.83\",\"maxValue\":110},"
+          "\"setupName\":\"Synthetic Player trim\"},"
+          "\"driverSwap\":[\"Synthetic Player\",\"S\\u00e9bastien Rival\"]}";
+      if (!writer.appendRest(
+              "/rest/garage/UIScreen/CarSetupOverview", setup, elapsed,
               error)) {
         std::cerr << error << "\n";
         return 1;

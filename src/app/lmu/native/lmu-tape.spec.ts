@@ -95,8 +95,9 @@ describeIfBuilt('lmu_replay tape', () => {
 
     expect(report).toContain('Snapshot size:   324820 bytes');
     // 300 snapshots, the End record, and the REST responses the fixture
-    // interleaves -- the count is not just the frame count.
-    expect(report).toMatch(/Records: *30[0-9]/);
+    // interleaves -- the count is not just the frame count, and it moves
+    // whenever the fixture gains an endpoint.
+    expect(report).toMatch(/Records: *3[0-9][0-9]/);
     // One keyframe at the start, then one per interval.
     expect(report).toMatch(/Keyframes: *[1-9]/);
     expect(report).toMatch(/Deltas: *[1-9]/);
@@ -105,6 +106,7 @@ describeIfBuilt('lmu_replay tape', () => {
     expect(report).toMatch(/REST records: *[1-9]/);
     expect(report).toContain('/rest/strategy/pitstop-estimate');
     expect(report).toContain('/rest/garage/UIScreen/RepairAndRefuel');
+    expect(report).toContain('/rest/garage/UIScreen/CarSetupOverview');
   });
 
   it('refuses a file that is not a tape', () => {
@@ -350,7 +352,7 @@ describeIfBuilt('lmu_replay live REST capture', () => {
 /**
  * Covers `anonymise`, which rewrites a tape with every driver name replaced.
  *
- * The fixture carries "Synthetic Player" and "Synthetic Rival", plus the
+ * The fixture carries "Synthetic Player" and "Sébastien Rival", plus the
  * player name, the .PLR filename and the server name -- so a tape built from
  * it holds one of everything the tool is meant to scrub.
  */
@@ -443,6 +445,29 @@ describeIfBuilt('lmu_replay anonymise', () => {
     };
   };
 
+  /** One REST body as the addon serves it, in its own process for the same reason. */
+  const replayedRest = (tape: string, restPath: string) => {
+    const script = [
+      'const { LmuSdkNode } = require(process.argv[1]);',
+      'const sdk = new LmuSdkNode();',
+      'sdk.start();',
+      'const deadline = Date.now() + 5000;',
+      'while (Date.now() < deadline && !sdk.read()?.running) {}',
+      'const body = sdk.readRest(process.argv[2]);',
+      'sdk.stop();',
+      'process.stdout.write(body || "");',
+    ].join(' ');
+    return execFileSync(process.execPath, ['-e', script, addonPath, restPath], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRDASHIES_LMU_REPLAY: tape,
+        IRDASHIES_LMU_REPLAY_SPEED: '100',
+        IRDASHIES_LMU_REPLAY_LOOP: '0',
+      },
+    });
+  };
+
   it('replaces every driver name with one from the file', () => {
     const { source, names, output } = scenario('replaces');
 
@@ -450,7 +475,7 @@ describeIfBuilt('lmu_replay anonymise', () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toMatch(/Synthetic Player -> Lewis Hamilton/);
-    expect(result.output).toMatch(/Synthetic Rival -> Fernando Alonso/);
+    expect(result.output).toMatch(/Sébastien Rival -> Fernando Alonso/);
 
     const session = replayedSession(output);
 
@@ -478,7 +503,7 @@ describeIfBuilt('lmu_replay anonymise', () => {
     const after = fs.readFileSync(output);
     for (const original of [
       'Synthetic Player',
-      'Synthetic Rival',
+      'Sébastien Rival',
       'Synthetic Player.PLR',
       'Synthetic Server',
     ]) {
@@ -499,7 +524,7 @@ describeIfBuilt('lmu_replay anonymise', () => {
     const result = anonymise(source, names, output);
 
     expect(result.output).toMatch(/Synthetic Player -> Fernando Alonso/);
-    expect(result.output).toMatch(/Synthetic Rival -> Kamui Kobayashi/);
+    expect(result.output).toMatch(/Sébastien Rival -> Kamui Kobayashi/);
   });
 
   it('numbers a repeat rather than giving two drivers one name', () => {
@@ -510,7 +535,7 @@ describeIfBuilt('lmu_replay anonymise', () => {
     const result = anonymise(source, names, output);
 
     expect(result.output).toMatch(/Synthetic Player -> Solo Driver/);
-    expect(result.output).toMatch(/Synthetic Rival -> Solo Driver 2/);
+    expect(result.output).toMatch(/Sébastien Rival -> Solo Driver 2/);
   });
 
   it('gives the same answer every time', () => {
@@ -523,6 +548,67 @@ describeIfBuilt('lmu_replay anonymise', () => {
     anonymise(source, names, second);
 
     expect(fs.readFileSync(output).equals(fs.readFileSync(second))).toBe(true);
+  });
+
+  it('replaces names inside the REST bodies too', () => {
+    // The garage screens carry names as ordinary content: the fixture's
+    // CarSetupOverview holds a setup named after the player and a
+    // driver-swap list, which is the shape a real capture turned out to have.
+    const { source, names, output } = scenario('rest-names');
+
+    const result = anonymise(source, names, output);
+
+    expect(result.status).toBe(0);
+    // Reported, so a run says how many bodies it touched rather than leaving
+    // it to be inferred.
+    expect(result.output).toMatch(/REST records: *\d+ \([1-9]\d* rewritten\)/);
+    expect(result.output).not.toMatch(/WARNING/);
+
+    const after = fs.readFileSync(output);
+    expect(after.includes('Synthetic Player trim')).toBe(false);
+    expect(after.includes('Lewis Hamilton trim')).toBe(true);
+  });
+
+  it('finds a name however the JSON spelled it', () => {
+    // The fixture writes one name literally and the accented one as é,
+    // which are the two forms a JSON writer produces. Matching only the bytes
+    // from the scoring block would leave the escaped one in the tape.
+    const { source, names, output } = scenario('rest-escaped');
+
+    anonymise(source, names, output);
+
+    const before = fs.readFileSync(source);
+    const after = fs.readFileSync(output);
+    const escaped = 'S\\u00e9bastien Rival';
+    const literal = 'Sébastien Rival';
+
+    expect(before.includes(escaped)).toBe(true);
+    expect(before.includes(literal)).toBe(true);
+    expect(after.includes(escaped)).toBe(false);
+    expect(after.includes(literal)).toBe(false);
+    expect(after.includes('Fernando Alonso')).toBe(true);
+  });
+
+  it('leaves the rewritten bodies parseable', () => {
+    // A body is rewritten as text, so the one thing that could go wrong is
+    // producing something the poller can no longer parse.
+    const { source, names, output } = scenario('rest-valid');
+
+    anonymise(source, names, output);
+    const body = replayedRest(output, '/rest/garage/UIScreen/CarSetupOverview');
+
+    expect(() => JSON.parse(body) as unknown).not.toThrow();
+    const parsed = JSON.parse(body) as {
+      SETUP_OVERVIEW?: { setupName?: string; VM_FUEL_LEVEL?: unknown };
+      driverSwap?: string[];
+    };
+    expect(parsed.SETUP_OVERVIEW?.setupName).toBe('Lewis Hamilton trim');
+    expect(parsed.driverSwap).toEqual(['Lewis Hamilton', 'Fernando Alonso']);
+    // The values the app actually reads are untouched.
+    expect(parsed.SETUP_OVERVIEW?.VM_FUEL_LEVEL).toEqual({
+      stringValue: '0.83',
+      maxValue: 110,
+    });
   });
 
   it('carries the REST records through', () => {
