@@ -4,6 +4,8 @@ import { widgetItems } from '../frontend/components/Settings/menuItems';
 import { SIMULATOR_IDS } from './simulators';
 import {
   DEFAULT_SIM_WIDGET_SUPPORT,
+  LMU_DISABLED_WIDGETS,
+  LMU_SUPPORTED_WIDGETS,
   isWidgetDisabledForSim,
   normalizeSimWidgetSupport,
   widgetDisabledMessage,
@@ -66,12 +68,30 @@ describe('per-simulator widget support', () => {
     );
   });
 
-  it('ships with nothing disabled for either simulator', () => {
-    // The blind spot monitor was listed for LMU while its data was thought
-    // unavailable. It works, so nothing is hidden by default any more.
-    SIMULATOR_IDS.forEach((simulator) => {
-      expect(config.disabledWidgets[simulator]).toEqual([]);
+  it('hides nothing under iRacing', () => {
+    // iRacing is the sim every widget is written against, so the list exists
+    // for the other direction only.
+    expect(config.disabledWidgets.iracing).toEqual([]);
+  });
+
+  it('hides everything under LMU that is not on its supported list', () => {
+    expect(config.disabledWidgets.lmu).toEqual([...LMU_DISABLED_WIDGETS]);
+    LMU_SUPPORTED_WIDGETS.forEach((id) => {
+      expect(isWidgetDisabledForSim(config, id, 'lmu')).toBe(false);
     });
+    LMU_DISABLED_WIDGETS.forEach((id) => {
+      expect(isWidgetDisabledForSim(config, id, 'lmu')).toBe(true);
+    });
+  });
+
+  it('accounts for every widget in the build under LMU', () => {
+    // The guard that makes two hand-kept lists safe. A widget added to the app
+    // and to neither list would quietly appear under LMU unverified; one added
+    // to both would be hidden while claiming to be supported.
+    const all = Object.keys(WIDGET_MAP).sort();
+    const listed = [...LMU_SUPPORTED_WIDGETS, ...LMU_DISABLED_WIDGETS].sort();
+
+    expect(listed).toEqual(all);
   });
 
   it('disables nothing while no simulator is known', () => {

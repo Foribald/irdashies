@@ -28,6 +28,56 @@ export interface SimWidgetSupportConfig {
 }
 
 /**
+ * The widgets verified to work under Le Mans Ultimate.
+ *
+ * LMU's data comes from a shared-memory block and a local REST API that carry
+ * a fraction of what iRacing publishes, so support is per widget and has to be
+ * established one at a time. This is the list that has been, and it is the
+ * reason for the one below rather than a second opinion about it: a spec
+ * asserts the two are exact complements over WIDGET_MAP, so a widget added to
+ * the app cannot quietly appear under LMU without someone deciding which list
+ * it belongs in.
+ */
+export const LMU_SUPPORTED_WIDGETS: readonly string[] = [
+  'battle',
+  'blindspotmonitor',
+  'cornername',
+  'flag',
+  'fuel',
+  'infobar',
+  'input',
+  'pitlanehelper',
+  'relative',
+  'standings',
+  // Not a sim-specific widget: it reports whatever channels the running sim
+  // publishes, which is how LMU's own mapping gets checked. It is also the
+  // one widget absent from the settings menu, so there would be no toggle to
+  // grey out if it were listed as unsupported.
+  'telemetryinspector',
+];
+
+/** Everything else, hidden while LMU is the running sim. */
+export const LMU_DISABLED_WIDGETS: readonly string[] = [
+  'carsystems',
+  'deltaspeed',
+  'fastercarsfrombehind',
+  'flatmap',
+  'gantry',
+  'garagecover',
+  'heartrate',
+  'laptimelog',
+  'laptrace',
+  'map',
+  'rejoin',
+  'sectordelta',
+  'slowcarahead',
+  'tachometer',
+  'twitchchat',
+  'weather',
+  'wind',
+];
+
+/**
  * Seeds the JSON on first run, and the fallback if it cannot be read.
  *
  * Only widgets that exist in this build may be named here — a spec asserts it,
@@ -40,9 +90,22 @@ export const DEFAULT_SIM_WIDGET_SUPPORT: SimWidgetSupportConfig = {
   message: 'This widget is not compatible with the running sim',
   disabledWidgets: {
     iracing: [],
-    lmu: [],
+    lmu: [...LMU_DISABLED_WIDGETS],
   },
 };
+
+/**
+ * Bumped whenever the lists above change.
+ *
+ * The file is seeded once and then belongs to the user, so a shipped change
+ * would otherwise never reach anyone who had already run the app -- the whole
+ * point of these lists is that the app ships knowledge about which widgets
+ * work under which sim, and that knowledge improves between releases. The
+ * storage layer replaces an older file with the current defaults and logs that
+ * it did, which costs a user their hand edits once per change and is why the
+ * number is bumped only for a real one.
+ */
+export const SIM_WIDGET_SUPPORT_VERSION = 2;
 
 /**
  * Whether a widget is unavailable under the running sim.
