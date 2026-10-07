@@ -75,6 +75,14 @@ struct Options {
   std::string outputPath;
   /** anonymise: the file of replacement names, one per line. */
   std::string namesPath;
+  /**
+   * anonymise: extra literals to scrub, as from=to or just from.
+   *
+   * For a spelling the derivation does not predict, and for cleaning a tape
+   * whose snapshots are already anonymised -- there the original name is gone,
+   * so nothing can be derived from it and the literal has to be given.
+   */
+  std::vector<std::pair<std::string, std::string>> alsoScrub;
   double durationSeconds = 0.0;
   std::uint32_t pollMillis = 10;
   std::uint32_t frames = 240;
@@ -103,6 +111,17 @@ bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
       if (options.path.empty()) options.path = options.outputPath;
     } else if (arg == "--names" && hasNext) {
       options.namesPath = argv[++i];
+    } else if (arg == "--also-scrub" && hasNext) {
+      const std::string value = argv[++i];
+      const auto split = value.find('=');
+      if (split == std::string::npos) {
+        // No replacement given, so the name pool supplies one. Marked with an
+        // empty target and resolved once the pool exists.
+        options.alsoScrub.emplace_back(value, std::string());
+      } else {
+        options.alsoScrub.emplace_back(
+            value.substr(0, split), value.substr(split + 1));
+      }
     } else if (arg == "--duration" && hasNext) {
       options.durationSeconds = std::atof(argv[++i]);
     } else if (arg == "--poll" && hasNext) {
@@ -557,67 +576,140 @@ std::string jsonEncoded(
   return out;
 }
 
-/** One name, every spelling to look for, and what replaces it. */
-struct NameRewrite {
+/** Splits on runs of spaces, dropping empties. */
+std::vector<std::string> words(const std::string& text) {
+  std::vector<std::string> out;
+  std::istringstream stream(text);
+  std::string word;
+  while (stream >> word) out.push_back(word);
+  return out;
+}
+
+/**
+ * The initial-and-surname spelling, or empty when the name has no surname.
+ *
+ * LMU's pit menu names the driver this way -- "H Attard" where the scoring
+ * block holds the full name -- so the full name being replaced everywhere else
+ * still left this one behind, 999 times in a four-minute capture. It is a
+ * different string rather than a different encoding, which is why no amount of
+ * escape handling reaches it.
+ *
+ * The initial is taken as a whole UTF-8 sequence, so an accented first name
+ * abbreviates to a character rather than to half of one.
+ */
+std::string initialAndSurname(const std::string& name, bool withDot) {
+  auto parts = words(name);
+  // A pool name that ran out repeats with a number appended, so a trailing
+  // number is a disambiguator rather than a surname. Abbreviating without
+  // noticing turned "Keep Unused 2" into "K 2".
+  std::string suffix;
+  if (parts.size() >= 2 &&
+      parts.back().find_first_not_of("0123456789") == std::string::npos) {
+    suffix = " " + parts.back();
+    parts.pop_back();
+  }
+  if (parts.size() < 2) return {};
+  std::size_t length = 1;
+  decodeUtf8(parts.front(), 0, length);
+  return parts.front().substr(0, length) + (withDot ? ". " : " ") +
+         parts.back() + suffix;
+}
+
+/** One spelling of one name, and what takes its place. */
+struct NameSubstitution {
+  /** The text to find, as it would appear in a JSON body. */
+  std::string from;
+  /** The replacement, encoded so the body stays valid JSON. */
+  std::string to;
+  /** The name this came from, for reporting a leftover. */
   std::string original;
-  /** The encodings a JSON writer could have used for `original`. */
-  std::vector<std::string> forms;
-  /** The pseudonym, encoded so it is still a valid JSON string. */
-  std::string replacement;
 };
 
 /**
- * Builds the rewrite list, longest original first.
+ * Every spelling of every name, longest first.
  *
- * Longest first so a name that contains another is replaced whole rather than
- * having its tail rewritten by the shorter one.
+ * Longest first across all names rather than per name, so a spelling that
+ * contains another -- a full name against its own abbreviation, or one
+ * driver's surname inside another's -- is replaced whole rather than having
+ * its tail rewritten by the shorter one.
+ *
+ * `extras` are the literals given with --also-scrub, for a spelling this does
+ * not predict. They are substitutions in their own right, so an already
+ * anonymised tape can be cleaned without the original name being present to
+ * derive anything from.
  */
-std::vector<NameRewrite> buildNameRewrites(
+std::vector<NameSubstitution> buildNameSubstitutions(
     const std::vector<std::string>& originals,
-    const std::map<std::string, std::string>& assigned) {
-  std::vector<NameRewrite> rewrites;
+    const std::map<std::string, std::string>& assigned,
+    const std::vector<std::pair<std::string, std::string>>& extras) {
+  std::vector<NameSubstitution> subs;
+  const auto add = [&subs](
+                       const std::string& from,
+                       const std::string& to,
+                       const std::string& original) {
+    if (from.empty() || from == to) return;
+    for (const auto& existing : subs) {
+      if (existing.from == from) return;
+    }
+    subs.push_back({from, to, original});
+  };
+
+  const auto addEveryEncoding = [&add](
+                                    const std::string& from,
+                                    const std::string& to,
+                                    const std::string& original) {
+    // The replacement stays literal UTF-8: valid JSON whichever encoding the
+    // match used, so one form of it covers every candidate.
+    const std::string encoded = jsonEncoded(to, false, false);
+    add(from, encoded, original);
+    add(jsonEncoded(from, false, false), encoded, original);
+    add(jsonEncoded(from, true, false), encoded, original);
+    add(jsonEncoded(from, true, true), encoded, original);
+  };
+
+  // Before the derived forms, because `add` keeps the first substitution for a
+  // given string and an instruction given on the command line has to beat one
+  // this worked out for itself. A derived form claimed "F Alonso" first and
+  // the replacement asked for was silently dropped.
+  for (const auto& extra : extras) {
+    addEveryEncoding(extra.first, extra.second, extra.first);
+  }
+
   for (const auto& original : originals) {
     const auto found = assigned.find(original);
     if (found == assigned.end()) continue;
+    const std::string& pseudonym = found->second;
 
-    NameRewrite rewrite;
-    rewrite.original = original;
-    // The replacement stays literal UTF-8: valid JSON whichever form the
-    // match took, so one encoding covers every candidate.
-    rewrite.replacement = jsonEncoded(found->second, false, false);
-    for (const auto& form : {
-             original,
-             jsonEncoded(original, false, false),
-             jsonEncoded(original, true, false),
-             jsonEncoded(original, true, true),
-         }) {
-      if (form.empty()) continue;
-      if (std::find(rewrite.forms.begin(), rewrite.forms.end(), form) ==
-          rewrite.forms.end()) {
-        rewrite.forms.push_back(form);
-      }
+    addEveryEncoding(original, pseudonym, original);
+    // Abbreviated the same way it was found, so the pit menu still reads like
+    // a pit menu rather than suddenly carrying a full name.
+    for (const bool withDot : {false, true}) {
+      const std::string shortOriginal = initialAndSurname(original, withDot);
+      const std::string shortPseudonym = initialAndSurname(pseudonym, withDot);
+      if (shortOriginal.empty()) continue;
+      addEveryEncoding(
+          shortOriginal,
+          shortPseudonym.empty() ? pseudonym : shortPseudonym,
+          original);
     }
-    rewrites.push_back(std::move(rewrite));
   }
 
   std::sort(
-      rewrites.begin(),
-      rewrites.end(),
-      [](const NameRewrite& a, const NameRewrite& b) {
-        return a.original.size() > b.original.size();
+      subs.begin(),
+      subs.end(),
+      [](const NameSubstitution& a, const NameSubstitution& b) {
+        return a.from.size() > b.from.size();
       });
-  return rewrites;
+  return subs;
 }
 
 /** Replaces every spelling of every name in a JSON body. */
 std::string rewriteNamesInJson(
     const std::string& body,
-    const std::vector<NameRewrite>& rewrites) {
+    const std::vector<NameSubstitution>& subs) {
   std::string out = body;
-  for (const auto& rewrite : rewrites) {
-    for (const auto& form : rewrite.forms) {
-      out = replaceAll(out, form, rewrite.replacement);
-    }
+  for (const auto& sub : subs) {
+    out = replaceAll(out, sub.from, sub.to);
   }
   return out;
 }
@@ -842,7 +934,14 @@ int runAnonymise(const Options& options) {
   // assignment identical to what the lazy path produced, so an anonymised tape
   // is still reproducible.
   for (const auto& original : originals) pool.pseudonymFor(original);
-  const auto rewrites = buildNameRewrites(originals, pool.assigned());
+  // An --also-scrub with no replacement takes one from the pool, so a literal
+  // is scrubbed on the same terms as a name read out of the tape.
+  auto extras = options.alsoScrub;
+  for (auto& extra : extras) {
+    if (extra.second.empty()) extra.second = pool.pseudonymFor(extra.first);
+  }
+  const auto rewrites =
+      buildNameSubstitutions(originals, pool.assigned(), extras);
 
   TapeWriter writer;
   if (!writer.open(options.outputPath, error)) {
@@ -894,15 +993,15 @@ int runAnonymise(const Options& options) {
         // the scoring block. Reported with its surroundings, so it is a
         // decision rather than a mystery.
         for (const auto& rewrite : rewrites) {
-          if (rewrite.original.size() < 3) continue;
-          const auto at = rewritten.find(rewrite.original);
+          if (rewrite.from.size() < 3) continue;
+          const auto at = rewritten.find(rewrite.from);
           if (at == std::string::npos) continue;
           ++restLeaks;
           leakingPaths.insert(restPath);
-          if (leakExamples.find(rewrite.original) == leakExamples.end()) {
+          if (leakExamples.find(rewrite.from) == leakExamples.end()) {
             leakExamples.emplace(
-                rewrite.original,
-                contextAround(rewritten, at, rewrite.original.size()));
+                rewrite.from,
+                contextAround(rewritten, at, rewrite.from.size()));
           }
           break;
         }
@@ -1128,7 +1227,14 @@ int runFixture(const Options& options) {
       refuel << "{\"fuelInfo\":{\"maxVirtualEnergy\":100},"
              << "\"wearables\":{\"body\":{\"aero\":0.1},"
              << "\"brakes\":[1,1,1,1],\"suspension\":[1,1,1,1]},"
-             << "\"pitMenu\":{\"pitMenu\":[{\"name\":\"FUEL:\","
+             << "\"pitMenu\":{\"pitMenu\":["
+             // The driver-swap entry, spelled the way LMU spells it: an
+             // initial and a surname, where the scoring block holds the full
+             // name. A real four-minute capture carried this 999 times and the
+             // full-name replacement never touched it.
+             << "{\"name\":\"DRIVER:\",\"currentSetting\":0,"
+             << "\"settings\":[{\"text\":\"S Rival\"}]},"
+             << "{\"name\":\"FUEL:\","
              << "\"currentSetting\":0,\"settings\":[{\"text\":\"+"
              << (30.0 + static_cast<double>(frame) * 0.01) << " L\"}]}]}}";
       if (!writer.appendRest(

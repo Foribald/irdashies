@@ -366,7 +366,8 @@ describeIfBuilt('lmu_replay anonymise', () => {
   const anonymise = (
     source: string,
     names: string,
-    output: string
+    output: string,
+    extra: string[] = []
   ): { status: number; output: string } => {
     try {
       return {
@@ -381,6 +382,7 @@ describeIfBuilt('lmu_replay anonymise', () => {
             output,
             '--names',
             names,
+            ...extra,
           ],
           { encoding: 'utf8' }
         ),
@@ -587,6 +589,82 @@ describeIfBuilt('lmu_replay anonymise', () => {
     expect(after.includes(escaped)).toBe(false);
     expect(after.includes(literal)).toBe(false);
     expect(after.includes('Fernando Alonso')).toBe(true);
+  });
+
+  /** The pit menu's DRIVER: entry, as the addon serves it back. */
+  const pitMenuDriver = (tape: string) => {
+    const body = replayedRest(tape, '/rest/garage/UIScreen/RepairAndRefuel');
+    const parsed = JSON.parse(body) as {
+      pitMenu?: {
+        pitMenu?: { name?: string; settings?: { text?: string }[] }[];
+      };
+    };
+    const entry = parsed.pitMenu?.pitMenu?.find(
+      (item) => item.name === 'DRIVER:'
+    );
+    return entry?.settings?.[0]?.text;
+  };
+
+  it('replaces the name abbreviated the way LMU abbreviates it', () => {
+    // The pit menu spells the driver as an initial and a surname while the
+    // scoring block holds the full name, so this is a different string rather
+    // than a different encoding -- no amount of escape handling reaches it. A
+    // real capture carried it 999 times after a full-name-only pass.
+    const { source, names, output } = scenario('abbreviated');
+
+    anonymise(source, names, output);
+
+    expect(pitMenuDriver(source)).toBe('S Rival');
+    // Abbreviated in turn, so the menu still reads like a pit menu rather
+    // than suddenly carrying a full name.
+    expect(pitMenuDriver(output)).toBe('F Alonso');
+    expect(fs.readFileSync(output).includes('S Rival')).toBe(false);
+  });
+
+  it('abbreviates around the number on a repeated pool name', () => {
+    // "Keep Unused 2" has to abbreviate to "K Unused 2": the trailing number
+    // disambiguates a pool that ran out, so taking it as the surname gave the
+    // menu a driver called "K 2".
+    const { source, names, output } = scenario(
+      'abbrev-numbered',
+      'Keep Unused\n'
+    );
+
+    anonymise(source, names, output);
+
+    expect(pitMenuDriver(output)).toBe('K Unused 2');
+  });
+
+  it('scrubs a literal given on the command line', () => {
+    // For a spelling this does not predict, and for a tape whose snapshots are
+    // already anonymised: there the original name is gone, so nothing can be
+    // derived from it and the literal is the only way in.
+    const { source, names, output } = scenario('also-scrub');
+    const second = tapeFor('also-scrub-again');
+
+    anonymise(source, names, output);
+    const result = anonymise(
+      output,
+      namesFileFor('also-scrub-pool', 'Keep Unused\n'),
+      second,
+      ['--also-scrub', 'F Alonso=X Driver']
+    );
+
+    expect(result.status).toBe(0);
+    expect(pitMenuDriver(second)).toBe('X Driver');
+    expect(fs.readFileSync(second).includes('F Alonso')).toBe(false);
+  });
+
+  it('lets the command line beat a spelling it worked out itself', () => {
+    // Both would replace "F Alonso". The explicit one has to win, or the
+    // replacement asked for is silently dropped.
+    const { source, names, output } = scenario('also-scrub-wins');
+    const second = tapeFor('also-scrub-wins-again');
+
+    anonymise(source, names, output);
+    anonymise(output, names, second, ['--also-scrub', 'F Alonso=X Driver']);
+
+    expect(pitMenuDriver(second)).toBe('X Driver');
   });
 
   it('leaves the rewritten bodies parseable', () => {
