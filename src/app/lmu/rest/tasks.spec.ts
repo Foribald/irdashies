@@ -203,6 +203,23 @@ describe('repair-and-refuel task', () => {
     expect(output?.target).toBe('session');
   });
 
+  it('sends the tank size to the session as well', () => {
+    // The pit screen states the tank outright, which is the one source for it
+    // that is not an inference.
+    const { data } = apply('repair-and-refuel', repairAndRefuelFixture());
+
+    expect(data.session.maxFuel).toBe(120);
+  });
+
+  it('leaves the tank unset when the payload has no fuelInfo', () => {
+    const payload = repairAndRefuelFixture() as Record<string, unknown>;
+    delete payload.fuelInfo;
+
+    const { data } = apply('repair-and-refuel', payload);
+
+    expect(data.session.maxFuel).toBeUndefined();
+  });
+
   it('rejects a corner array that is not exactly four long', () => {
     // Publishing three would leave a consumer indexing corner 3 with
     // undefined, which is worse than publishing nothing.

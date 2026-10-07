@@ -422,60 +422,58 @@ describe('mapLmuSession fuel capacity', () => {
 
   const capacityOf = (
     className: string,
-    rest?: { fuelRatio?: number; fuelLevelMax?: number }
+    rest?: { maxFuel?: number; fuelRatio?: number; fuelLevelMax?: number }
   ) =>
     mapLmuSession(asClass(className), null, rest).DriverInfo
       .DriverCarFuelMaxLtr;
 
-  it('derives Hypercar and LMGT3 from the fuel ratio', () => {
-    // 0.83 L per percent of virtual energy is 83 L at a full 100%.
-    expect(capacityOf('Hyper', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
-    expect(capacityOf('GT3', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
+  it('takes the tank the pit screen states', () => {
+    expect(capacityOf('GT3', { maxFuel: 120 })).toBe(120);
   });
 
-  it('takes LMGTE from the fuel slider maximum instead', () => {
-    // A different answer from the same payload: the slider bound is the tank.
+  it('takes the same tank whatever the class', () => {
+    // This replaced a per-class table. Every class reads the tank the same
+    // way now, so a class that was never in the table is no longer a special
+    // case waiting to be discovered.
+    for (const className of ['Hyper', 'GT3', 'GTE', 'LMP2_ELMS', 'LMP3']) {
+      expect(capacityOf(className, { maxFuel: 120 })).toBe(120);
+    }
+  });
+
+  it('never reads the fuel ratio as a tank size', () => {
+    // The bug this replaced. fuelRatio is the garage slider's current
+    // position, which the driver sets -- a GT3 reading 1.03 against a 120 L
+    // tank gave 103 L. It equals the tank only when the slider sits at its
+    // maximum, which is why the old rule looked verified.
+    expect(capacityOf('GT3', { fuelRatio: 1.03 })).toBe(100);
+    expect(capacityOf('Hyper', { fuelRatio: 0.83 })).toBe(100);
+    expect(capacityOf('GT3', { maxFuel: 120, fuelRatio: 1.03 })).toBe(120);
+  });
+
+  it('falls back to the slider bound when the tank is not served', () => {
+    // The top step of the ratio slider is the tank in litres, because at that
+    // step a full energy load fills the tank exactly.
+    expect(capacityOf('GT3', { fuelLevelMax: 120 })).toBe(120);
     expect(capacityOf('GTE', { fuelLevelMax: 120 })).toBe(120);
   });
 
-  it('does not cross the two rules over', () => {
-    // A ratio must not be read as litres, nor a slider bound as a ratio --
-    // either confusion is wrong by roughly a hundred times.
-    expect(capacityOf('GTE', { fuelRatio: 0.83 })).toBe(100);
-    expect(capacityOf('GT3', { fuelLevelMax: 120 })).toBe(100);
+  it('prefers the stated tank over the slider bound', () => {
+    expect(capacityOf('GT3', { maxFuel: 118, fuelLevelMax: 120 })).toBe(118);
   });
 
-  it('leaves unverified classes on the capacity LMU reports', () => {
-    // LMP2 was confirmed correct that way; LMP3 is merely unchecked, which is
-    // why neither is in the table.
-    expect(
-      capacityOf('LMP2_ELMS', { fuelRatio: 0.83, fuelLevelMax: 120 })
-    ).toBe(100);
-    expect(capacityOf('LMP3', { fuelRatio: 0.83, fuelLevelMax: 120 })).toBe(
-      100
-    );
-  });
-
-  it('tracks a fuel ratio the player changes', () => {
-    // Editing the setup moves the tank, and the REST task repeats so the new
-    // body arrives; this is the recomputation that has to follow it.
-    expect(capacityOf('GT3', { fuelRatio: 0.83 })).toBeCloseTo(83, 5);
-    expect(capacityOf('GT3', { fuelRatio: 1.1 })).toBeCloseTo(110, 5);
-    expect(capacityOf('GT3', { fuelRatio: 0.5 })).toBeCloseTo(50, 5);
-  });
-
-  it('falls back when the value its class wants is missing', () => {
+  it('falls back to shared memory when REST says nothing', () => {
     // The REST API may not be answering, and the garage screen is not served
     // at every moment.
     expect(capacityOf('GT3')).toBe(100);
     expect(capacityOf('GT3', {})).toBe(100);
-    expect(capacityOf('GTE', {})).toBe(100);
+    expect(capacityOf('GT3', { fuelRatio: 1.03 })).toBe(100);
   });
 
   it('ignores a non-positive or non-finite value', () => {
     [0, -1, Number.NaN, Number.POSITIVE_INFINITY].forEach((bad) => {
-      expect(capacityOf('GT3', { fuelRatio: bad })).toBe(100);
-      expect(capacityOf('GTE', { fuelLevelMax: bad })).toBe(100);
+      expect(capacityOf('GT3', { maxFuel: bad })).toBe(100);
+      expect(capacityOf('GT3', { fuelLevelMax: bad })).toBe(100);
+      expect(capacityOf('GT3', { maxFuel: bad, fuelLevelMax: 120 })).toBe(120);
     });
   });
 

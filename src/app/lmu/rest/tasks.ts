@@ -260,6 +260,18 @@ export const LMU_REST_TASKS: readonly LmuRestTask[] = [
           data.session.maxVirtualEnergy = value as number;
         },
       },
+      {
+        id: 'maxFuel',
+        target: 'session',
+        // The tank, in litres, stated outright. Every other route to it is an
+        // inference: the garage slider's bound has to be read as litres, and
+        // mFuelCapacity is shared memory's word for it. A GT3 capture has all
+        // three agreeing at 120, and this is the one that says so directly.
+        parse: (payload) => finiteNumber(at(payload, ['fuelInfo', 'maxFuel'])),
+        apply: (data, value) => {
+          data.session.maxFuel = value as number;
+        },
+      },
       numberCell('aeroDamage', ['wearables', 'body', 'aero'], (data, value) => {
         data.cells.aeroDamage = value;
       }),
@@ -303,8 +315,12 @@ export const LMU_REST_TASKS: readonly LmuRestTask[] = [
       {
         id: 'fuelLevelMax',
         target: 'session',
-        // maxValue, not stringValue: this one is a real bound rather than a
-        // display string, and LMGTE's tank is that bound in litres.
+        // maxValue, not stringValue: the top step of the fuel-ratio slider.
+        //
+        // The ratio is litres per percent of virtual energy, so at the top
+        // step a full energy load fills the tank exactly -- which makes this
+        // bound the tank in litres. A GT3 capture reads 120 here against a
+        // 120 L tank, while the slider's current position reads 1.03.
         parse: (payload) =>
           finiteNumber(
             at(payload, [

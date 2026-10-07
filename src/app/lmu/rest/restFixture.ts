@@ -32,7 +32,7 @@ export const repairAndRefuelFixture = () => ({
       },
     ],
   },
-  fuelInfo: { maxVirtualEnergy: 100 },
+  fuelInfo: { maxVirtualEnergy: 100, maxFuel: 120 },
 });
 
 /** The same screen for an energy-limited car: the menu offers VE, not fuel. */

@@ -69,12 +69,19 @@ export interface LmuRestSession {
    */
   fuelRatio?: number;
   /**
-   * The upper bound of the garage's fuel slider.
+   * The fuel tank in litres, as the pit screen states it.
    *
-   * For LMGTE this is the tank in litres outright, where the ratio route does
-   * not apply. Kept as its own field rather than folded into a capacity,
-   * because which of the two a car wants is a per-class fact and belongs with
-   * the class, not with the number.
+   * Preferred over every other route to the tank, because the others are
+   * inferences: fuelLevelMax has to be read as litres, and mFuelCapacity is
+   * shared memory's separate word for the same thing.
+   */
+  maxFuel?: number;
+  /**
+   * The top step of the garage's fuel-ratio slider.
+   *
+   * The ratio is litres per percent of virtual energy, so at its top step a
+   * full energy load fills the tank exactly -- which makes this bound the tank
+   * in litres, and a usable fallback when maxFuel is not being served.
    */
   fuelLevelMax?: number;
   forecast?: {
