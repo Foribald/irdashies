@@ -7,7 +7,9 @@ import {
   LMU_DISABLED_WIDGETS,
   LMU_SUPPORTED_WIDGETS,
   isWidgetDisabledForSim,
+  KNOWN_WIDGET_IDS,
   normalizeSimWidgetSupport,
+  normalizeSimWidgetSupportVerbose,
   widgetDisabledMessage,
   widgetIncompatibleLabel,
   type SimWidgetSupportConfig,
@@ -160,5 +162,58 @@ describe('per-simulator widget support', () => {
       normalizeSimWidgetSupport({ disabledWidgets: { iracing: [], lmu: [] } })
         .disabledWidgets.lmu
     ).toEqual([]);
+  });
+});
+
+describe('a hand-edited file with a mistake in it', () => {
+  it('knows every widget in the build', () => {
+    expect([...KNOWN_WIDGET_IDS].sort()).toEqual(
+      Object.keys(WIDGET_MAP).sort()
+    );
+  });
+
+  it('drops an id no widget answers to, and says which', () => {
+    // The mistake this exists for. Kept, it matched nothing and the widget it
+    // was meant to hide stayed on screen with nothing said anywhere.
+    const { config, problems } = normalizeSimWidgetSupportVerbose({
+      disabledWidgets: { iracing: [], lmu: ['fuelcalculator', 'carsystems'] },
+    });
+
+    expect(config.disabledWidgets.lmu).toEqual(['carsystems']);
+    expect(problems.unknownWidgets).toEqual([
+      { simulator: 'lmu', id: 'fuelcalculator' },
+    ]);
+  });
+
+  it('reports a section that is not a simulator', () => {
+    // Worth saying because the fallback is not "disable nothing": a simulator
+    // the file does not mention takes the shipped defaults instead.
+    const { config, problems } = normalizeSimWidgetSupportVerbose({
+      disabledWidgets: { iracing: [], LMU: ['carsystems'] },
+    });
+
+    expect(problems.unknownSimulators).toEqual(['LMU']);
+    expect(config.disabledWidgets.lmu).toEqual(
+      DEFAULT_SIM_WIDGET_SUPPORT.disabledWidgets.lmu
+    );
+  });
+
+  it('reports nothing when the file is correct', () => {
+    const { problems } = normalizeSimWidgetSupportVerbose({
+      disabledWidgets: { iracing: [], lmu: ['carsystems'] },
+    });
+
+    expect(problems.unknownWidgets).toEqual([]);
+    expect(problems.unknownSimulators).toEqual([]);
+  });
+
+  it('still disables nothing for an empty list', () => {
+    // An empty list is a deliberate choice, not a mistake.
+    const { config, problems } = normalizeSimWidgetSupportVerbose({
+      disabledWidgets: { iracing: [], lmu: [] },
+    });
+
+    expect(config.disabledWidgets.lmu).toEqual([]);
+    expect(problems.unknownWidgets).toEqual([]);
   });
 });

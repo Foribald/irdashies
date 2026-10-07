@@ -4,7 +4,7 @@ import path from 'node:path';
 import {
   DEFAULT_SIM_WIDGET_SUPPORT,
   SIM_WIDGET_SUPPORT_VERSION,
-  normalizeSimWidgetSupport,
+  normalizeSimWidgetSupportVerbose,
   type SimWidgetSupportConfig,
 } from '@irdashies/types';
 import logger from '../logger';
@@ -52,7 +52,24 @@ const readConfig = async (): Promise<SimWidgetSupportConfig> => {
       );
       return await seed(target);
     }
-    return normalizeSimWidgetSupport(raw);
+    const { config, problems } = normalizeSimWidgetSupportVerbose(raw);
+    // Said out loud, because the file is edited by hand and a misspelled id
+    // used to do nothing whatsoever: it matched no widget, so the widget it
+    // was meant to hide stayed on screen and nothing anywhere said why.
+    for (const { simulator, id } of problems.unknownWidgets) {
+      logger.warn(
+        `[simWidgetSupport] ${FILENAME} lists "${id}" under ${simulator}, which is not a widget in this build; ignoring it`
+      );
+    }
+    // Sharper than it looks: a simulator the file does not mention falls back
+    // to the shipped defaults, so a misspelled key does not disable nothing --
+    // it quietly reinstates the whole bundled list.
+    for (const key of problems.unknownSimulators) {
+      logger.warn(
+        `[simWidgetSupport] ${FILENAME} has a "${key}" section, which is not a known simulator; the defaults apply instead`
+      );
+    }
+    return config;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       // A malformed file must not take the app down; fall back to the defaults

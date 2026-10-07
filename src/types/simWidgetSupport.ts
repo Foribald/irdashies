@@ -138,28 +138,93 @@ export const widgetIncompatibleLabel = (
   simulator ? `Not ${SIMULATOR_LABELS[simulator]} compatible` : null;
 
 /**
- * Repairs whatever was read from disk into a usable config, so a hand-edited
- * file cannot crash the app. Unknown keys are dropped, missing ones fall back
- * to the defaults, and non-string entries are ignored. An empty list is
- * honoured as a deliberate "disable nothing" rather than treated as absent.
+ * Every widget id this build has.
+ *
+ * Derived from the two LMU lists rather than kept as a third one, because a
+ * spec already asserts those two are exact complements over WIDGET_MAP -- so
+ * this set is correct for free, and cannot drift from the widgets that exist.
+ *
+ * Needed because the config comes from a file a user edits by hand, and a
+ * misspelled id used to do nothing at all: it stayed in the list, matched no
+ * widget, and the widget it was meant to hide simply stayed on screen with
+ * nothing said anywhere.
+ */
+export const KNOWN_WIDGET_IDS: readonly string[] = [
+  ...LMU_SUPPORTED_WIDGETS,
+  ...LMU_DISABLED_WIDGETS,
+];
+
+/** What a hand-edited file got wrong, for the caller to report. */
+export interface SimWidgetSupportProblems {
+  /** Ids no widget in this build answers to, with the sim that listed them. */
+  unknownWidgets: { simulator: string; id: string }[];
+  /** Keys under disabledWidgets that are not simulators. */
+  unknownSimulators: string[];
+}
+
+export interface NormalizedSimWidgetSupport {
+  config: SimWidgetSupportConfig;
+  problems: SimWidgetSupportProblems;
+}
+
+/**
+ * Repairs whatever was read from disk, and says what it had to repair.
+ *
+ * Unknown ids are dropped rather than kept. Keeping them was harmless to the
+ * lookup -- nothing matches -- but it made a typo indistinguishable from a
+ * widget that genuinely has no support, which is the one mistake a hand-edited
+ * list of ids invites. Dropping them and naming them in the log turns a silent
+ * no-op into a line that says which word was wrong.
+ *
+ * An unrecognised simulator key is worth reporting for a sharper reason: the
+ * list for a simulator the file does not mention falls back to the shipped
+ * defaults, so a misspelled "Imu" does not disable nothing -- it quietly
+ * reinstates the whole bundled list.
+ */
+export const normalizeSimWidgetSupportVerbose = (
+  raw: unknown
+): NormalizedSimWidgetSupport => {
+  const source = (raw ?? {}) as Partial<SimWidgetSupportConfig>;
+  const known = new Set(KNOWN_WIDGET_IDS);
+  const unknownWidgets: { simulator: string; id: string }[] = [];
+
+  const listFor = (simulator: ActiveSimulator): string[] => {
+    const value = source.disabledWidgets?.[simulator];
+    if (!Array.isArray(value)) {
+      return [...DEFAULT_SIM_WIDGET_SUPPORT.disabledWidgets[simulator]];
+    }
+    const ids = value.filter((id): id is string => typeof id === 'string');
+    for (const id of ids) {
+      if (!known.has(id)) unknownWidgets.push({ simulator, id });
+    }
+    return ids.filter((id) => known.has(id));
+  };
+
+  const simulators = new Set<string>(SIMULATOR_IDS);
+  const unknownSimulators = Object.keys(
+    (source.disabledWidgets ?? {}) as Record<string, unknown>
+  ).filter((key) => !simulators.has(key));
+
+  return {
+    config: {
+      message:
+        typeof source.message === 'string' && source.message.length > 0
+          ? source.message
+          : DEFAULT_SIM_WIDGET_SUPPORT.message,
+      disabledWidgets: Object.fromEntries(
+        SIMULATOR_IDS.map((simulator) => [simulator, listFor(simulator)])
+      ) as Record<ActiveSimulator, string[]>,
+    },
+    problems: { unknownWidgets, unknownSimulators },
+  };
+};
+
+/**
+ * Repairs a hand-edited file rather than crashing on it. Unknown keys are
+ * dropped, missing ones fall back to the defaults, and non-string entries are
+ * ignored. An empty list is honoured as a deliberate "disable nothing" rather
+ * than treated as absent.
  */
 export const normalizeSimWidgetSupport = (
   raw: unknown
-): SimWidgetSupportConfig => {
-  const source = (raw ?? {}) as Partial<SimWidgetSupportConfig>;
-  const listFor = (simulator: ActiveSimulator): string[] => {
-    const value = source.disabledWidgets?.[simulator];
-    return Array.isArray(value)
-      ? value.filter((id): id is string => typeof id === 'string')
-      : [...DEFAULT_SIM_WIDGET_SUPPORT.disabledWidgets[simulator]];
-  };
-  return {
-    message:
-      typeof source.message === 'string' && source.message.length > 0
-        ? source.message
-        : DEFAULT_SIM_WIDGET_SUPPORT.message,
-    disabledWidgets: Object.fromEntries(
-      SIMULATOR_IDS.map((simulator) => [simulator, listFor(simulator)])
-    ) as Record<ActiveSimulator, string[]>,
-  };
-};
+): SimWidgetSupportConfig => normalizeSimWidgetSupportVerbose(raw).config;
