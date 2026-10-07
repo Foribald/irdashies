@@ -37,10 +37,23 @@ describe('loadTrackData', () => {
     expect(loadTrackData('Lusail International Circuit')).toBeNull();
   });
 
-  it('still matches when a distinctive word is shared', () => {
-    // The guard is about generic words, not about rejecting near misses:
-    // "sebring" is distinctive, so this is a real match.
-    expect(loadTrackData('Sebring International Raceway')?.trackId).toBe(
+  it('never guesses at a name from another sim', () => {
+    // The dataset's scheme is lowercase throughout, and every iRacing
+    // TrackName is. A Title Case display name belongs to another sim, and
+    // guessing at those is what produced wrong circuits -- "Michelin Raceway
+    // Road Atlanta" matched "daytona 2011 road" on the word "road".
+    expect(loadTrackData('Michelin Raceway Road Atlanta')).toBeNull();
+    expect(loadTrackData('Sebring International Raceway')).toBeNull();
+    // Such names come through LMU_TRACK_DATA_IDS instead.
+    const alias = lmuTrackDataId('Michelin Raceway Road Atlanta');
+    expect(alias).toBe('roadatlanta full');
+    expect(loadTrackData(alias ?? '')?.trackId).toBe('roadatlanta full');
+  });
+
+  it('still matches a lowercase near miss', () => {
+    // The guard is about which scheme the name is in, not about rejecting
+    // near misses within the dataset's own.
+    expect(loadTrackData('sebring international raceway')?.trackId).toBe(
       'sebring international'
     );
   });

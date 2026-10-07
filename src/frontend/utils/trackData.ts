@@ -112,12 +112,19 @@ function normalizeTrackId(trackName: string): string | null {
 
   // Token-overlap fallback: e.g. iRacing "silverstone gp" → Lovely "silverstone 2019 gp"
   //
-  // It has to be able to answer "no". It was written for small drift between
-  // two spellings of the same circuit, where a guess is reasonable, but it
-  // returned the best of whatever it had -- so a name from another sim came
-  // back as a real track on one shared word. "WeatherTech Raceway Laguna Seca"
-  // resolved to "summit summit raceway" because both contain "raceway", and
-  // both corner widgets then showed Summit Point's corners.
+  // Only for a name already in the dataset's own scheme, which is lowercase
+  // throughout -- every iRacing TrackName is ("roadatlanta full",
+  // "nurburgring nordschleife"). A display name from another sim is Title
+  // Case, and guessing at those is what produced wrong circuits: "Michelin
+  // Raceway Road Atlanta" matched "daytona 2011 road" on the word "road", and
+  // "WeatherTech Raceway Laguna Seca" matched "summit summit raceway" on
+  // "raceway". Both widgets then showed another circuit's corners.
+  //
+  // Such a name has to come through LMU_TRACK_DATA_IDS or not at all. Exact
+  // and punctuation-stripped matching above still applies to it, because
+  // those cannot be wrong.
+  if (trackName !== trackName.toLowerCase()) return null;
+
   const target = trackName.trim().toLowerCase();
   const targetTokens = new Set(target.split(/\s+/).filter(Boolean));
   if (targetTokens.size === 0) return null;

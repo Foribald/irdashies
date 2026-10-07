@@ -32,6 +32,7 @@ export const LMU_TRACK_DATA_IDS: Readonly<Record<string, string>> = {
   'Circuit de Spa-Francorchamps': 'spa 2024 combined',
   'Circuit of the Americas': 'cota-gp',
   'Daytona International Speedway Road Course': 'daytona 2011 road',
+  'Michelin Raceway Road Atlanta': 'roadatlanta full',
   'Sebring International Raceway': 'sebring international',
   'Silverstone Grand Prix Circuit - WEC': 'silverstone 2019 gp',
   'WeatherTech Raceway Laguna Seca': 'lagunaseca',
