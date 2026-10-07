@@ -346,3 +346,226 @@ describeIfBuilt('lmu_replay live REST capture', () => {
     expect(report).toMatch(/REST records: *0 /);
   });
 });
+
+/**
+ * Covers `anonymise`, which rewrites a tape with every driver name replaced.
+ *
+ * The fixture carries "Synthetic Player" and "Synthetic Rival", plus the
+ * player name, the .PLR filename and the server name -- so a tape built from
+ * it holds one of everything the tool is meant to scrub.
+ */
+describeIfBuilt('lmu_replay anonymise', () => {
+  const namesFileFor = (name: string, contents: string) => {
+    const file = path.join(path.dirname(tapeFor(name)), `${name}.txt`);
+    fs.writeFileSync(file, contents);
+    return file;
+  };
+
+  const anonymise = (
+    source: string,
+    names: string,
+    output: string
+  ): { status: number; output: string } => {
+    try {
+      return {
+        status: 0,
+        output: execFileSync(
+          exePath,
+          [
+            'anonymise',
+            '--input',
+            source,
+            '--output',
+            output,
+            '--names',
+            names,
+          ],
+          { encoding: 'utf8' }
+        ),
+      };
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string };
+      return { status: failure.status ?? 1, output: failure.stderr ?? '' };
+    }
+  };
+
+  /** A tape with names in it, plus a names file, ready to anonymise. */
+  const scenario = (
+    name: string,
+    pool = 'Lewis Hamilton\nFernando Alonso\n'
+  ) => {
+    const source = tapeFor(`${name}-source`);
+    writeFixture(source, 120);
+    return {
+      source,
+      names: namesFileFor(name, pool),
+      output: tapeFor(`${name}-anon`),
+    };
+  };
+
+  /**
+   * Replays in a child process, with the tape path in the environment the
+   * process starts with.
+   *
+   * openTape cannot be used here. It assigns process.env and the addon reads
+   * the variable through the CRT, which on Windows does not see a write made
+   * after the process started -- so an instance built later in the run replays
+   * whichever tape the process saw first. Every other test in this file opens
+   * one tape and asserts things true of any fixture, so none of them notices;
+   * this one is the only place two tapes differ, so it is the only place that
+   * does.
+   */
+  const replayedSession = (tape: string) => {
+    const script = [
+      'const { LmuSdkNode } = require(process.argv[1]);',
+      'const sdk = new LmuSdkNode();',
+      'sdk.start();',
+      'const deadline = Date.now() + 5000;',
+      'while (Date.now() < deadline && !sdk.read()?.running) {}',
+      'const session = sdk.readSession();',
+      'sdk.stop();',
+      'process.stdout.write(JSON.stringify(session));',
+    ].join(' ');
+    const out = execFileSync(process.execPath, ['-e', script, addonPath], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRDASHIES_LMU_REPLAY: tape,
+        IRDASHIES_LMU_REPLAY_SPEED: '100',
+        IRDASHIES_LMU_REPLAY_LOOP: '0',
+      },
+    });
+    return JSON.parse(out) as {
+      running?: boolean;
+      playerName?: string;
+      serverName?: string;
+      drivers?: { name: string; isPlayer: boolean }[];
+    };
+  };
+
+  it('replaces every driver name with one from the file', () => {
+    const { source, names, output } = scenario('replaces');
+
+    const result = anonymise(source, names, output);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/Synthetic Player -> Lewis Hamilton/);
+    expect(result.output).toMatch(/Synthetic Rival -> Fernando Alonso/);
+
+    const session = replayedSession(output);
+
+    expect(session.running).toBe(true);
+    expect(session.drivers?.map((driver) => driver.name)).toEqual([
+      'Lewis Hamilton',
+      'Fernando Alonso',
+    ]);
+    // The coherence that matters: the sim carries the same string in
+    // mPlayerName and in the player's own scoring entry, so they must still
+    // agree after the rewrite.
+    expect(session.playerName).toBe('Lewis Hamilton');
+    expect(session.drivers?.[0].isPlayer).toBe(true);
+    expect(session.serverName).toBe('SERVER');
+  });
+
+  it('leaves no original name anywhere in the file', () => {
+    // The point of the whole tool. Payloads are run-length encoded, so a name
+    // survives as a literal run -- a byte search is the honest check.
+    const { source, names, output } = scenario('scrubbed');
+
+    anonymise(source, names, output);
+
+    const before = fs.readFileSync(source);
+    const after = fs.readFileSync(output);
+    for (const original of [
+      'Synthetic Player',
+      'Synthetic Rival',
+      'Synthetic Player.PLR',
+      'Synthetic Server',
+    ]) {
+      expect(before.includes(original)).toBe(true);
+      expect(after.includes(original)).toBe(false);
+    }
+    // A track is not a person, and a tape that forgot where it was recorded
+    // would be useless.
+    expect(after.includes('Synthetic Circuit')).toBe(true);
+  });
+
+  it('joins a first and last name split by a comma or a tab', () => {
+    const { source, names, output } = scenario(
+      'joined',
+      '# a pool\n\nFernando,Alonso\nKamui\tKobayashi\n'
+    );
+
+    const result = anonymise(source, names, output);
+
+    expect(result.output).toMatch(/Synthetic Player -> Fernando Alonso/);
+    expect(result.output).toMatch(/Synthetic Rival -> Kamui Kobayashi/);
+  });
+
+  it('numbers a repeat rather than giving two drivers one name', () => {
+    // Two drivers reading the same name in the standings looks like a fault in
+    // the app rather than a names file that ran out.
+    const { source, names, output } = scenario('short', 'Solo Driver\n');
+
+    const result = anonymise(source, names, output);
+
+    expect(result.output).toMatch(/Synthetic Player -> Solo Driver/);
+    expect(result.output).toMatch(/Synthetic Rival -> Solo Driver 2/);
+  });
+
+  it('gives the same answer every time', () => {
+    // Assignment is by first appearance rather than by anything random, so an
+    // anonymised tape can be reproduced and compared.
+    const { source, names, output } = scenario('stable');
+    const second = tapeFor('stable-again');
+
+    anonymise(source, names, output);
+    anonymise(source, names, second);
+
+    expect(fs.readFileSync(output).equals(fs.readFileSync(second))).toBe(true);
+  });
+
+  it('carries the REST records through', () => {
+    const { source, names, output } = scenario('rest');
+
+    anonymise(source, names, output);
+
+    const report = execFileSync(exePath, ['inspect', '--input', output], {
+      encoding: 'utf8',
+    });
+    expect(report).not.toMatch(/REST records: *0 /);
+  });
+
+  it('refuses to write over the tape it is reading', () => {
+    // The writer truncates on open, so this would destroy the only copy.
+    const { source, names } = scenario('inplace');
+
+    const result = anonymise(source, names, source);
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toMatch(/--output must differ from --input/);
+    expect(fs.readFileSync(source).includes('Synthetic Player')).toBe(true);
+  });
+
+  it('refuses a names file with nothing usable in it', () => {
+    const { source, names, output } = scenario(
+      'empty',
+      '# every line a comment\n\n'
+    );
+
+    const result = anonymise(source, names, output);
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toMatch(/No usable names/);
+    expect(fs.existsSync(output)).toBe(false);
+  });
+
+  it('refuses a names file that is not there', () => {
+    const { source, output } = scenario('missing');
+
+    const result = anonymise(source, 'no-such-file.txt', output);
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toMatch(/Failed to open names file/);
+  });
+});

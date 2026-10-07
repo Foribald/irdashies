@@ -8,11 +8,13 @@
 // shared-memory mapping because the reader is the SDK; for LMU the reader is
 // our own addon, so the tape is played in-process by lmu_tape_node instead.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -62,7 +64,17 @@ std::uint64_t nowMicros() {
 
 struct Options {
   std::string command;
+  /**
+   * The single path the one-path commands take, whichever flag named it.
+   *
+   * Kept so record, inspect and fixture read exactly as they did. anonymise is
+   * the only command that needs two, and it uses the fields below.
+   */
   std::string path;
+  std::string inputPath;
+  std::string outputPath;
+  /** anonymise: the file of replacement names, one per line. */
+  std::string namesPath;
   double durationSeconds = 0.0;
   std::uint32_t pollMillis = 10;
   std::uint32_t frames = 240;
@@ -74,7 +86,8 @@ struct Options {
 
 bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
   if (argc < 2) {
-    error = "Usage: lmu_replay <record|inspect|fixture> [options]";
+    error =
+        "Usage: lmu_replay <record|inspect|fixture|anonymise> [options]";
     return false;
   }
   options.command = argv[1];
@@ -82,8 +95,14 @@ bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
   for (int i = 2; i < argc; ++i) {
     const std::string arg = argv[i];
     const bool hasNext = i + 1 < argc;
-    if ((arg == "--output" || arg == "--input") && hasNext) {
-      options.path = argv[++i];
+    if (arg == "--input" && hasNext) {
+      options.inputPath = argv[++i];
+      if (options.path.empty()) options.path = options.inputPath;
+    } else if (arg == "--output" && hasNext) {
+      options.outputPath = argv[++i];
+      if (options.path.empty()) options.path = options.outputPath;
+    } else if (arg == "--names" && hasNext) {
+      options.namesPath = argv[++i];
     } else if (arg == "--duration" && hasNext) {
       options.durationSeconds = std::atof(argv[++i]);
     } else if (arg == "--poll" && hasNext) {
@@ -105,7 +124,22 @@ bool parseOptions(int argc, char** argv, Options& options, std::string& error) {
     }
   }
 
-  if (options.path.empty()) {
+  if (options.command == "anonymise") {
+    if (options.inputPath.empty() || options.outputPath.empty()) {
+      error = "anonymise needs both --input and --output";
+      return false;
+    }
+    if (options.inputPath == options.outputPath) {
+      // Rewriting in place would read from a file the writer has already
+      // truncated, so the tape would be destroyed rather than anonymised.
+      error = "--output must differ from --input";
+      return false;
+    }
+    if (options.namesPath.empty()) {
+      error = "anonymise needs --names, a file of replacement names";
+      return false;
+    }
+  } else if (options.path.empty()) {
     error = "An --output (record, fixture) or --input (inspect) path is required";
     return false;
   }
@@ -366,6 +400,323 @@ int runRecord(const Options& options) {
   return 0;
 }
 
+/**
+ * The longest name the sim's 32-byte fields hold, leaving room for the NUL.
+ *
+ * Replacements are truncated to it, because that is what the app would read
+ * anyway -- truncating here means the tape never claims a name longer than it
+ * can store.
+ */
+constexpr std::size_t kNameFieldLimit = 31;
+
+std::string trim(const std::string& text) {
+  const auto first = text.find_first_not_of(" \t");
+  if (first == std::string::npos) return std::string();
+  return text.substr(first, text.find_last_not_of(" \t") - first + 1);
+}
+
+/**
+ * Reads a fixed-size char field as a string, stopping at the first NUL.
+ *
+ * The sim pads these buffers, so the size is the bound and the NUL only says
+ * where the name ends inside it.
+ */
+std::string boundedString(const char* field, std::size_t size) {
+  const std::size_t length =
+      static_cast<std::size_t>(std::find(field, field + size, '\0') - field);
+  return std::string(field, length);
+}
+
+/** Overwrites a fixed-size char field, NUL-padded and never overrunning. */
+void writeBounded(char* field, std::size_t size, const std::string& value) {
+  if (size == 0) return;
+  std::memset(field, 0, size);
+  std::memcpy(field, value.data(), std::min(value.size(), size - 1));
+}
+
+/**
+ * Loads the replacement names.
+ *
+ * One name per line. A line may be a complete name ("Lewis Hamilton") or a
+ * first and last name separated by a comma or a tab, which are joined with a
+ * space -- so a list exported from a spreadsheet works unedited. Blank lines
+ * and lines starting with '#' are ignored, so the file can be commented.
+ */
+bool loadNamePool(
+    const std::string& path,
+    std::vector<std::string>& pool,
+    std::string& error) {
+  std::ifstream stream(path);
+  if (!stream) {
+    error = "Failed to open names file: " + path;
+    return false;
+  }
+
+  std::string line;
+  while (std::getline(stream, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const auto separator = line.find_first_of(",\t");
+    if (separator != std::string::npos) {
+      line = trim(line.substr(0, separator)) + " " +
+             trim(line.substr(separator + 1));
+    }
+    line = trim(line);
+    if (line.empty() || line.front() == '#') continue;
+    if (line.size() > kNameFieldLimit) line.resize(kNameFieldLimit);
+    line = trim(line);
+    if (!line.empty()) pool.push_back(line);
+  }
+
+  if (pool.empty()) {
+    error = "No usable names in " + path;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Hands out one pseudonym per real name, the same one every time.
+ *
+ * Keyed on the original name rather than on a vehicle id, which is what keeps
+ * the result coherent: mPlayerName and the player's own mDriverName carry the
+ * same string, so they get the same pseudonym without this having to know
+ * which slot the player is in. A car that leaves and rejoins on another id
+ * keeps its name for the same reason.
+ *
+ * Assignment is by order of first appearance, so one tape and one names file
+ * always produce the same output.
+ */
+class NamePool {
+ public:
+  explicit NamePool(std::vector<std::string> names) : names_(std::move(names)) {}
+
+  const std::string& pseudonymFor(const std::string& original) {
+    const auto existing = assigned_.find(original);
+    if (existing != assigned_.end()) return existing->second;
+
+    // Past the end of the pool names repeat with a number appended rather
+    // than collide: two drivers sharing a name in the standings reads as a
+    // fault in the app rather than as a short list here.
+    const std::size_t round = taken_ / names_.size();
+    std::string name = names_[taken_ % names_.size()];
+    if (round > 0) {
+      const std::string suffix = " " + std::to_string(round + 1);
+      if (name.size() + suffix.size() > kNameFieldLimit) {
+        name.resize(kNameFieldLimit - suffix.size());
+      }
+      name += suffix;
+    }
+    ++taken_;
+    return assigned_.emplace(original, std::move(name)).first->second;
+  }
+
+  const std::map<std::string, std::string>& assigned() const {
+    return assigned_;
+  }
+
+ private:
+  std::vector<std::string> names_;
+  std::map<std::string, std::string> assigned_;
+  std::size_t taken_ = 0;
+};
+
+/**
+ * Every field in a snapshot that names a person, and what becomes of it.
+ *
+ * mPlrFileName is zeroed rather than renamed. It is the player's own
+ * "<name>.PLR" on rF2-derived sims and nothing in the app reads it, so a tape
+ * would otherwise carry a real name that no consumer could even be seen using.
+ *
+ * The scoring stream goes the same way for the same reason at larger scale:
+ * 64 KB nothing reads, which on rF2 carries result lines with names in them.
+ * Zeroing it costs nothing in the tape, since a constant buffer run-length
+ * encodes away.
+ *
+ * mServerName is replaced rather than zeroed, so an anonymised tape can be
+ * told apart from one recorded offline.
+ */
+void anonymiseSnapshot(LMUObjectOut& snapshot, NamePool& pool) {
+  for (std::size_t i = 0; i < LMU_MAX_VEHICLES; ++i) {
+    auto& vehicle = snapshot.scoring.vehScoringInfo[i];
+    const std::string original =
+        boundedString(vehicle.mDriverName, sizeof(vehicle.mDriverName));
+    // An empty slot is not a person. Naming it would invent a driver the tape
+    // never had, in a slot the mapper reads by occupancy.
+    if (original.empty()) continue;
+    writeBounded(
+        vehicle.mDriverName,
+        sizeof(vehicle.mDriverName),
+        pool.pseudonymFor(original));
+  }
+
+  auto& info = snapshot.scoring.scoringInfo;
+  const std::string player =
+      boundedString(info.mPlayerName, sizeof(info.mPlayerName));
+  if (!player.empty()) {
+    writeBounded(
+        info.mPlayerName, sizeof(info.mPlayerName), pool.pseudonymFor(player));
+  }
+  std::memset(info.mPlrFileName, 0, sizeof(info.mPlrFileName));
+  writeBounded(info.mServerName, sizeof(info.mServerName), "SERVER");
+  std::memset(
+      snapshot.scoring.scoringStream,
+      0,
+      sizeof(snapshot.scoring.scoringStream));
+  std::memset(
+      snapshot.scoring.scoringStreamSize,
+      0,
+      sizeof(snapshot.scoring.scoringStreamSize));
+}
+
+/** Collects the names a snapshot carries, in order, without changing it. */
+void collectNames(const LMUObjectOut& snapshot, std::vector<std::string>& out) {
+  const auto remember = [&out](std::string name) {
+    if (name.empty()) return;
+    if (std::find(out.begin(), out.end(), name) == out.end()) {
+      out.push_back(std::move(name));
+    }
+  };
+  for (std::size_t i = 0; i < LMU_MAX_VEHICLES; ++i) {
+    const auto& vehicle = snapshot.scoring.vehScoringInfo[i];
+    remember(boundedString(vehicle.mDriverName, sizeof(vehicle.mDriverName)));
+  }
+  const auto& info = snapshot.scoring.scoringInfo;
+  remember(boundedString(info.mPlayerName, sizeof(info.mPlayerName)));
+}
+
+/**
+ * Rewrites a tape with every driver name replaced.
+ *
+ * A tape cannot be edited in place: names live inside run-length encoded
+ * payloads, every record carries a checksum over its payload, and a delta is
+ * an XOR against the frame before it. So each frame is decoded, patched and
+ * re-encoded, and the writer recomputes the checksums.
+ *
+ * Two passes, the first reading only, so every name in the tape is known
+ * before anything is written. That is what lets the REST bodies -- stored
+ * verbatim, and not ours to parse -- be checked against the complete set
+ * rather than against whatever had been seen by the time each came round.
+ */
+int runAnonymise(const Options& options) {
+  std::vector<std::string> names;
+  std::string error;
+  if (!loadNamePool(options.namesPath, names, error)) {
+    std::cerr << error << "\n";
+    return 1;
+  }
+
+  TapeReader reader;
+  if (!reader.open(options.inputPath, error)) {
+    std::cerr << error << "\n";
+    return 1;
+  }
+
+  TapeRecordHeader record{};
+  LMUObjectOut snapshot{};
+  std::string restPath;
+  std::string restBody;
+
+  std::vector<std::string> originals;
+  while (true) {
+    const auto result =
+        reader.readNext(record, snapshot, restPath, restBody, error);
+    if (result == TapeReadResult::EndOfFile) break;
+    if (result == TapeReadResult::Error) {
+      std::cerr << error << "\n";
+      return 1;
+    }
+    const auto kind = static_cast<RecordKind>(record.kind);
+    if (kind == RecordKind::Keyframe || kind == RecordKind::Delta) {
+      collectNames(snapshot, originals);
+    }
+  }
+
+  if (!reader.rewind(error)) {
+    std::cerr << error << "\n";
+    return 1;
+  }
+
+  NamePool pool(std::move(names));
+  TapeWriter writer;
+  if (!writer.open(options.outputPath, error)) {
+    std::cerr << error << "\n";
+    return 1;
+  }
+
+  std::uint64_t snapshots = 0;
+  std::uint64_t disconnects = 0;
+  std::uint64_t restRecords = 0;
+  std::uint64_t restLeaks = 0;
+  std::set<std::string> leakingPaths;
+  while (true) {
+    const auto result =
+        reader.readNext(record, snapshot, restPath, restBody, error);
+    if (result == TapeReadResult::EndOfFile) break;
+    if (result == TapeReadResult::Error) {
+      std::cerr << error << "\n";
+      return 1;
+    }
+
+    bool ok = true;
+    switch (static_cast<RecordKind>(record.kind)) {
+      case RecordKind::Keyframe:
+      case RecordKind::Delta:
+        anonymiseSnapshot(snapshot, pool);
+        ok = writer.appendSnapshot(snapshot, record.elapsedMicros, error);
+        ++snapshots;
+        break;
+      case RecordKind::Disconnect:
+        ok = writer.appendDisconnect(record.elapsedMicros, error);
+        ++disconnects;
+        break;
+      case RecordKind::Rest:
+        // Copied through: this is LMU's own JSON and rewriting it would mean
+        // parsing a shape that changes between builds. Reported instead, so a
+        // body that does carry a name is a decision rather than a surprise.
+        for (const auto& original : originals) {
+          if (original.size() >= 3 &&
+              restBody.find(original) != std::string::npos) {
+            ++restLeaks;
+            leakingPaths.insert(restPath);
+            break;
+          }
+        }
+        ok = writer.appendRest(restPath, restBody, record.elapsedMicros, error);
+        ++restRecords;
+        break;
+      default:
+        break;
+    }
+    if (!ok) {
+      std::cerr << error << "\n";
+      return 1;
+    }
+  }
+
+  if (!writer.finish(error)) {
+    std::cerr << error << "\n";
+    return 1;
+  }
+
+  std::cout << "Anonymised:      " << options.inputPath << "\n"
+            << "Wrote:           " << options.outputPath << "\n"
+            << "Snapshots:       " << snapshots << "\n"
+            << "Disconnects:     " << disconnects << "\n"
+            << "REST records:    " << restRecords << "\n"
+            << "Names replaced:  " << pool.assigned().size() << "\n";
+  for (const auto& entry : pool.assigned()) {
+    std::cout << "  " << entry.first << " -> " << entry.second << "\n";
+  }
+  if (restLeaks > 0) {
+    std::cout << "WARNING:         " << restLeaks
+              << " REST record(s) still carry an original name:\n";
+    for (const auto& path : leakingPaths) {
+      std::cout << "  " << path << "\n";
+    }
+  }
+  return 0;
+}
+
 int runInspect(const Options& options) {
   TapeReader reader;
   std::string error;
@@ -465,6 +816,21 @@ int runFixture(const Options& options) {
       snapshot.scoring.scoringInfo.mTrackName,
       "Synthetic Circuit",
       sizeof(snapshot.scoring.scoringInfo.mTrackName) - 1);
+  // Names, so a fixture exercises the fields anonymise rewrites. The player's
+  // own scoring entry carries the same string as mPlayerName, which is what
+  // the real sim does and what anonymise relies on to keep the two in step.
+  std::strncpy(
+      snapshot.scoring.scoringInfo.mPlayerName,
+      "Synthetic Player",
+      sizeof(snapshot.scoring.scoringInfo.mPlayerName) - 1);
+  std::strncpy(
+      snapshot.scoring.scoringInfo.mPlrFileName,
+      "Synthetic Player.PLR",
+      sizeof(snapshot.scoring.scoringInfo.mPlrFileName) - 1);
+  std::strncpy(
+      snapshot.scoring.scoringInfo.mServerName,
+      "Synthetic Server",
+      sizeof(snapshot.scoring.scoringInfo.mServerName) - 1);
 
   for (std::uint32_t frame = 0; frame < options.frames; ++frame) {
     const double seconds = static_cast<double>(frame) / 100.0;
@@ -476,6 +842,10 @@ int runFixture(const Options& options) {
       scoring.mID = car;
       scoring.mIsPlayer = car == 0 ? 1 : 0;
       scoring.mPlace = static_cast<std::uint8_t>(car + 1);
+      std::strncpy(
+          scoring.mDriverName,
+          car == 0 ? "Synthetic Player" : "Synthetic Rival",
+          sizeof(scoring.mDriverName) - 1);
       scoring.mLapDist = std::fmod(seconds * 60.0 + car * 100.0, 7004.0);
       scoring.mTotalLaps = static_cast<std::int32_t>(seconds / 90.0);
       auto& telemetry = snapshot.telemetry.telemInfo[car];
@@ -552,6 +922,7 @@ int main(int argc, char** argv) {
   if (options.command == "record") return runRecord(options);
   if (options.command == "inspect") return runInspect(options);
   if (options.command == "fixture") return runFixture(options);
+  if (options.command == "anonymise") return runAnonymise(options);
 
   std::cerr << "Unknown command: " << options.command << "\n";
   return 2;
