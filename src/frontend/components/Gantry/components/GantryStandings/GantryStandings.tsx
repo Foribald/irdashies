@@ -10,7 +10,11 @@ import {
 } from '../../../shared/DriverName/DriverName';
 import { type Gap, useHighlightColor } from '@irdashies/domain';
 import { useDriverStandings } from '@irdashies/domain/standings/useDriverStandings';
-import { useLapTimesStoreUpdater } from '@irdashies/context';
+import {
+  useActiveSimulator,
+  useLapTimesStoreUpdater,
+} from '@irdashies/context';
+import { simulatorHasDriverRatings } from '@irdashies/types';
 import { Tooltip } from '../Tooltip/Tooltip';
 import { useGantrySettings } from '../../hooks/useGantrySettings';
 import { useHeld } from '../../hooks/useGantrySessionHold';
@@ -161,6 +165,10 @@ const isEmptyStandings = (standings: readonly unknown[]) =>
 
 export const GantryStandings = memo(({ followedCarIdx }: Props) => {
   useLapTimesStoreUpdater(true);
+  // Resolved here and passed down, so the rows stay driven by props rather
+  // than reaching into context themselves.
+  const simulator = useActiveSimulator();
+  const showRatings = simulatorHasDriverRatings(simulator);
   const nameFormat = useGantrySettings()?.driverNameFormat ?? 'surname';
   // Gap and interval are only calculated when the settings say they are
   // enabled, so passing nothing leaves both columns empty. The cast is needed
@@ -244,6 +252,7 @@ export const GantryStandings = memo(({ followedCarIdx }: Props) => {
                     highlightColorHex={highlightColorHex}
                     nameFormat={nameFormat}
                     onFocusDriver={handleFocusDriver}
+                    showRatings={showRatings}
                   />
                 ))}
               </div>
@@ -265,6 +274,8 @@ interface GantryDriverRowProps {
   highlightColorHex: string;
   nameFormat: NameFormat;
   onFocusDriver: (carNumber: string) => void;
+  /** False when the running simulator has no driver-rating system. */
+  showRatings: boolean;
 }
 
 const GantryDriverRow = memo(
@@ -277,6 +288,7 @@ const GantryDriverRow = memo(
     highlightColorHex,
     nameFormat,
     onFocusDriver,
+    showRatings,
   }: GantryDriverRowProps) => {
     const isPlayer = driver.isPlayer;
     const isFollowed = driver.carIdx === followedCarIdx;
@@ -355,13 +367,16 @@ const GantryDriverRow = memo(
             <Compound tireCompound={driver.tireCompound} />
           )}
         </span>
-        {/* iR */}
+        {/* iR -- empty under a sim with no rating system; the column keeps
+            its width so the rows below stay aligned. */}
         <span className={`${COL.rating} flex items-center justify-end`}>
-          <DriverRatingBadge
-            license={driver.driver.license}
-            rating={driver.driver.rating}
-            format="rating-bw-no-license"
-          />
+          {showRatings && (
+            <DriverRatingBadge
+              license={driver.driver.license}
+              rating={driver.driver.rating}
+              format="rating-bw-no-license"
+            />
+          )}
         </span>
         {/* Pit */}
         <span className={`${COL.pit} text-xs`}>
