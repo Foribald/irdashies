@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { lmuTrackDataId } from '@irdashies/types';
-import { loadTrackData } from './trackData';
+import {
+  getAvailableLmuTracks,
+  loadLmuTrackData,
+  loadTrackData,
+} from './trackData';
 import { mapLovelyToTrackData } from './lovelyTrackData';
 
 /**
@@ -106,5 +110,119 @@ describe('an LMU track name, end to end', () => {
   it('gives nothing for a circuit the dataset does not have', () => {
     expect(sectionsFor('Fuji Speedway')).toEqual([]);
     expect(sectionsFor('Bahrain International Circuit')).toEqual([]);
+  });
+});
+
+describe('loadLmuTrackData', () => {
+  it('keys on the name LMU publishes, lowercased', () => {
+    // The whole reason the LMU dataset needs no matching: its ids are LMU's
+    // own display names with the case dropped.
+    expect(loadLmuTrackData('Fuji Speedway')?.trackId).toBe('fuji speedway');
+    expect(loadLmuTrackData('Bahrain Endurance Circuit')?.trackId).toBe(
+      'bahrain endurance circuit'
+    );
+    expect(loadLmuTrackData('Circuit de la Sarthe')?.trackId).toBe(
+      'circuit de la sarthe'
+    );
+  });
+
+  it('keeps layouts of one circuit apart', () => {
+    // Four Bahrains and two Fujis. Collapsing any pair would put one layout's
+    // corners on another.
+    const ids = [
+      'Bahrain International Circuit',
+      'Bahrain Endurance Circuit',
+      'Bahrain Outer Circuit',
+      'Bahrain Paddock Circuit',
+    ].map((name) => loadLmuTrackData(name)?.trackId);
+
+    expect(new Set(ids).size).toBe(4);
+    expect(loadLmuTrackData('Fuji Speedway Classic')?.trackId).toBe(
+      'fuji speedway classic'
+    );
+  });
+
+  it('matches an accented name', () => {
+    expect(loadLmuTrackData('Autódromo José Carlos Pace')?.trackId).toBe(
+      'autódromo josé carlos pace'
+    );
+  });
+
+  it('does not guess', () => {
+    // Exact only. The near-miss matching on the iRacing side is what answered
+    // "Michelin Raceway Road Atlanta" with "daytona 2011 road".
+    expect(loadLmuTrackData('Long Beach Street Circuit')).toBeNull();
+    expect(loadLmuTrackData('Fuji')).toBeNull();
+    expect(loadLmuTrackData('')).toBeNull();
+  });
+
+  it('gives every bundled layout usable corners', () => {
+    // A layout whose turns carry only a marker produces no sections at all --
+    // which is the state Long Beach is in on the iRacing side. Worth knowing
+    // if it ever becomes true here.
+    const tracks = getAvailableLmuTracks();
+    expect(tracks.length).toBe(21);
+    for (const { trackId } of tracks) {
+      // The id is the key -- the dataset's `name` is its own prettier label.
+      const raw = loadLmuTrackData(trackId);
+      const usable = (raw?.turn ?? []).filter(
+        (t) => t.start !== undefined && t.end !== undefined
+      );
+      expect(usable.length, trackId).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('the LMU circuits that used to be blank', () => {
+  /** Exactly the order the shared hook tries. */
+  const sectionsFor = (trackName: string) => {
+    const alias = lmuTrackDataId(trackName);
+    const raw =
+      loadLmuTrackData(trackName) ??
+      (alias ? loadTrackData(alias) : null) ??
+      loadTrackData(trackName);
+    return raw ? mapLovelyToTrackData(raw).sections : [];
+  };
+
+  it('names Fuji, which had nothing before', () => {
+    const sections = sectionsFor('Fuji Speedway');
+    const names = sections.map((s) => s.name);
+
+    expect(sections.length).toBeGreaterThan(10);
+    expect(names).toContain('Coca Cola');
+    expect(names).toContain('100 R');
+  });
+
+  it('numbers an unnamed turn from the dataset, not from a running count', () => {
+    // Fuji's turn 2 has no name and is the first unnamed one, so the counter
+    // called it "Turn 1". Bahrain has no names at all and would have been
+    // renumbered from 1 regardless.
+    const fuji = sectionsFor('Fuji Speedway');
+    const first = fuji.find((s) => s.name === '1st');
+
+    expect(first).toBeDefined();
+    expect(fuji.map((s) => s.name)).toContain('Turn 2');
+    expect(fuji.map((s) => s.name)).not.toContain('Turn 1');
+  });
+
+  it('names every Bahrain layout separately', () => {
+    const endurance = sectionsFor('Bahrain Endurance Circuit');
+    const outer = sectionsFor('Bahrain Outer Circuit');
+
+    expect(endurance.length).toBeGreaterThan(20);
+    expect(outer.length).toBeGreaterThan(5);
+    expect(endurance.length).not.toBe(outer.length);
+  });
+
+  it('still falls back to the iRacing dataset where LMU has no entry', () => {
+    // Laguna Seca and Road Atlanta are not in the LMU dataset.
+    expect(sectionsFor('WeatherTech Raceway Laguna Seca').length).toBe(11);
+    expect(
+      sectionsFor('Michelin Raceway Road Atlanta').map((s) => s.name)
+    ).toContain('The Esses');
+  });
+
+  it('gives nothing for a circuit neither dataset has', () => {
+    expect(sectionsFor('Long Beach Street Circuit')).toEqual([]);
   });
 });

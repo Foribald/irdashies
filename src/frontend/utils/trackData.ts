@@ -13,10 +13,16 @@
  */
 
 import trackDataBundle from '../assets/data/tracks-bundle.json';
+import lmuTrackDataBundle from '../assets/data/lmu-tracks-bundle.json';
 import logger from '@irdashies/utils/logger';
 
 export interface LovelyTurn {
   name?: string;
+  /**
+   * The circuit's own turn number. LMU's entries carry it; iRacing's do not,
+   * so an unnamed iRacing turn still falls back to a running count.
+   */
+  number?: number;
   // start/end are optional — Daytona's road configs have marker-only turns
   // with no start/end, and we filter those out at the mapping layer.
   start?: number;
@@ -192,6 +198,33 @@ export const loadTrackData = (trackName: string): LovelyTrack | null => {
 };
 
 /**
+ * Loads Lovely track data for a Le Mans Ultimate track.
+ *
+ * A separate bundle and a separate lookup, because LMU's ids are its own
+ * display names lowercased -- "fuji speedway", "bahrain endurance circuit",
+ * "autódromo josé carlos pace" -- so the name the sim publishes is the key,
+ * and no matching is required beyond lowering the case.
+ *
+ * Deliberately exact. The iRacing lookup has a near-miss fallback for the
+ * drift between two spellings of one circuit; guessing is what put Daytona's
+ * corners on Road Atlanta, and with ids this direct there is nothing to guess
+ * at. A layout the dataset has not covered yet returns null, and the widgets
+ * show no corner names, which is the honest answer.
+ *
+ * @param trackName LMU's own track name, as mTrackName reports it
+ * @returns The raw Lovely track data, or null when the dataset has no entry
+ */
+export const loadLmuTrackData = (trackName: string): LovelyTrack | null => {
+  try {
+    const bundle = lmuTrackDataBundle as unknown as TrackDataBundleType;
+    return bundle.tracks[trackName.trim().toLowerCase()] ?? null;
+  } catch (error) {
+    logger.warn('Failed to load LMU track data:', error);
+    return null;
+  }
+};
+
+/**
  * Returns every bundled track (used for storybook fixtures, debug pickers).
  */
 export const getAvailableTracks = (): {
@@ -201,6 +234,25 @@ export const getAvailableTracks = (): {
   const bundle = trackDataBundle as unknown as TrackDataBundleType;
   return Object.values(bundle.tracks).map((t) => ({
     trackId: t.trackId,
+    trackName: t.name,
+  }));
+};
+
+/**
+ * Every bundled LMU layout.
+ *
+ * `trackId` is the key, and it is LMU's own name lowercased. `trackName` is
+ * the dataset's prettier label for the same circuit -- "Fuji International
+ * Speedway" against an id of "fuji speedway" -- so it is the id, not the name,
+ * that loadLmuTrackData is given.
+ */
+export const getAvailableLmuTracks = (): {
+  trackId: string;
+  trackName: string;
+}[] => {
+  const bundle = lmuTrackDataBundle as unknown as TrackDataBundleType;
+  return Object.entries(bundle.tracks).map(([trackId, t]) => ({
+    trackId,
     trackName: t.name,
   }));
 };

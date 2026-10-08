@@ -1,25 +1,25 @@
 /**
- * Le Mans Ultimate's track names, against the bundled Lovely Sim Racing ids.
+ * Le Mans Ultimate's track names, against ids in the *iRacing* dataset.
  *
- * The corner widgets look their sections up in the Lovely dataset, which is
- * keyed by iRacing's lowercase slugs. LMU reports a full display name, so
- * nothing matched and the near-miss fallback answered with whatever shared a
- * word -- "WeatherTech Raceway Laguna Seca" resolved to "summit summit
- * raceway", and both widgets showed Summit Point's corners.
+ * A fallback, not the main route. Lovely publishes a dataset for LMU as well,
+ * keyed by LMU's own names lowercased, and loadLmuTrackData reads it directly
+ * -- so the 21 layouts it covers need nothing from this table.
  *
- * A table rather than a cleverer matcher, because the two naming schemes are
- * unrelated: no amount of normalising turns "Circuit de la Sarthe" into
- * "lemans full". Every entry maps a name LMU publishes to a dataset entry that
- * carries real corner names and real start/end ranges.
+ * This is for the layouts LMU runs that its dataset has not reached yet:
+ * Laguna Seca, Silverstone's WEC configuration, Barcelona, Daytona's road
+ * course and Road Atlanta all exist on the iRacing side, under names no amount
+ * of normalising would reach from LMU's -- nothing turns "Circuit de la
+ * Sarthe" into "lemans full". The entries that the LMU dataset also covers are
+ * kept rather than pruned, because they cost nothing (the LMU lookup is tried
+ * first) and because the map generator reads this same table.
  *
- * The same table also feeds tools/generate-lmu-track-maps.ts, which borrows
- * these names for the turn labels on its track maps. It lives here so the two
- * cannot disagree about which circuit is which.
+ * The same table feeds tools/generate-lmu-track-maps.ts, which borrows these
+ * names for the turn labels on its track maps. It lives here so the two cannot
+ * disagree about which circuit is which.
  *
- * LMU layouts absent from this table have no corner data at all: Fuji,
- * Bahrain, Lusail and Paul Ricard are not in the Lovely dataset under any
- * spelling, so there is nothing to point them at. They show no corner names,
- * which is the honest answer rather than a wrong one.
+ * A layout in neither place -- Long Beach, as of writing -- shows no corner
+ * names. That is the honest answer, and the near-miss matching that used to
+ * fill the gap answered "Michelin Raceway Road Atlanta" with Daytona.
  */
 export const LMU_TRACK_DATA_IDS: Readonly<Record<string, string>> = {
   'Algarve International Circuit': 'algarve gp',
