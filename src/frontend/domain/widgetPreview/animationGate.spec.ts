@@ -115,6 +115,28 @@ describe('preview animation gate: timers', () => {
     expect(expire).toHaveBeenCalledOnce();
   });
 
+  it('holds a timeout again when a pause comes before its resumed delivery', () => {
+    const { target } = fakeWindow();
+    const gate = installAnimationGate(target);
+    const expire = vi.fn();
+    const cancelled = vi.fn();
+    target.setTimeout(expire, 10);
+    const cancelledId = target.setTimeout(cancelled, 10);
+    gate.pause();
+    vi.advanceTimersByTime(50);
+    gate.resume();
+    // Paused again before the resumed delivery runs.
+    gate.pause();
+    vi.advanceTimersByTime(50);
+    expect(expire).not.toHaveBeenCalled();
+    // Still cancellable by its own id once held again.
+    target.clearTimeout(cancelledId);
+    gate.resume();
+    vi.advanceTimersByTime(0);
+    expect(expire).toHaveBeenCalledOnce();
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
   it('cancels a held timeout, and one rescheduled by a resume before it runs', () => {
     const { target } = fakeWindow();
     const gate = installAnimationGate(target);

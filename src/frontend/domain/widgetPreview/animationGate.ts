@@ -133,6 +133,14 @@ export function installAnimationGate(target: AnimationClock): AnimationGate {
   const heldTimeouts = new Map<number, () => void>();
   /** Rescheduled by a resume and not run yet: the original id's new one. */
   const releasedTimeouts = new Map<number, number>();
+  /**
+   * The one way a timeout's handler runs, first time or after a resume, so
+   * a pause that comes before either delivery holds it again.
+   */
+  const deliver = (id: number, fire: () => void) => {
+    if (paused) heldTimeouts.set(id, fire);
+    else fire();
+  };
 
   target.setTimeout = ((
     handler: TimerHandler,
@@ -142,10 +150,7 @@ export function installAnimationGate(target: AnimationClock): AnimationGate {
     if (typeof handler !== 'function')
       return startTimeout(handler, timeout, ...args);
     const fire = () => handler(...args);
-    const id: number = startTimeout(() => {
-      if (paused) heldTimeouts.set(id, fire);
-      else fire();
-    }, timeout);
+    const id: number = startTimeout(() => deliver(id, fire), timeout);
     return id;
   }) as AnimationClock['setTimeout'];
   target.clearTimeout = (id) => {
@@ -225,7 +230,7 @@ export function installAnimationGate(target: AnimationClock): AnimationGate {
           id,
           startTimeout(() => {
             releasedTimeouts.delete(id);
-            fire();
+            deliver(id, fire);
           }, 0)
         );
     },
