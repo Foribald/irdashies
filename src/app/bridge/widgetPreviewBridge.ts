@@ -73,8 +73,8 @@ const sameStatus = (a: WidgetPreviewStatus, b: WidgetPreviewStatus) =>
  * The window's visibility comes from its own events, here only. Settings
  * windows run with backgroundThrottling off, which Electron documents as
  * also affecting the Page Visibility API, so the page can keep reporting
- * itself visible while minimised or hidden. The same state gates the demo's
- * channel delivery.
+ * itself visible while minimised or hidden. The demo's channel delivery
+ * follows whether it runs, so nothing reaches a paused preview's frame.
  *
  * Being in the car comes from the session lifecycle, which every simulator
  * feeds and Demo Mode does not. Stopping a simulator's bridge reports a
@@ -131,14 +131,7 @@ export function setupWidgetPreviewBridge(
     if (!window || window.isDestroyed()) return undefined;
     const minimized = window.isMinimized();
     const set = (next: { minimized?: boolean; trayHidden?: boolean }) => {
-      const wasHidden = isHidden(page);
       Object.assign(visibility, next);
-      const hidden = isHidden(page);
-      // After the change: the bus reads the target's isVisible.
-      if (hidden !== wasHidden) {
-        if (hidden) page.runtime?.hide();
-        else page.runtime?.show();
-      }
       update(page);
     };
     const onMinimize = () => set({ minimized: true });
@@ -188,6 +181,13 @@ export function setupWidgetPreviewBridge(
       if (next !== page.running) {
         page.running = next;
         runtime.setRunning(next);
+        // The bus delivers only while the demo runs, whatever paused it: a
+        // rate-limited snapshot already pending when the Pause button is
+        // pressed or the player gets in the car would otherwise still reach
+        // the frame and change the paused picture. Told after `running`
+        // changes, since the bus reads it through the target's isVisible.
+        if (next) runtime.show();
+        else runtime.hide();
       }
     }
     report(page);
@@ -265,8 +265,9 @@ export function setupWidgetPreviewBridge(
         {
           id: sender.id,
           isDestroyed: () => sender.isDestroyed(),
-          // The state that pauses the demo also gates its delivery.
-          isVisible: () => !isHidden(page),
+          // Delivery follows the run state, which is false whenever the
+          // window is hidden as well as when the demo is paused otherwise.
+          isVisible: () => page.running,
           send: (_ipc, channel, payload) =>
             sender.send(WIDGET_PREVIEW_IPC.delivery, channel, payload),
         },

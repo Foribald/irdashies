@@ -307,6 +307,32 @@ describe('pausing the demo in place', () => {
     expect(latest(page)?.running).toBe(false);
   });
 
+  it('gates delivery whenever the demo is paused, not only when the window is hidden', () => {
+    const sim = lifecycle();
+    setup(sim.source);
+    const page = client(1);
+    subscribe(page);
+    invoke('connect', page);
+    const [runtime] = runtimes;
+    expect(runtime.target.isVisible()).toBe(true);
+
+    // The Pause button, with the window on screen.
+    invoke('setPaused', page, true);
+    expect(runtime.target.isVisible()).toBe(false);
+    invoke('setPaused', page, false);
+    expect(runtime.target.isVisible()).toBe(true);
+
+    // In the car, then Play there.
+    sim.drive(true);
+    expect(runtime.target.isVisible()).toBe(false);
+    invoke('playInCar', page);
+    expect(runtime.target.isVisible()).toBe(true);
+
+    // Told each time, after the state it reads had changed.
+    expect(runtime.shown).toEqual([false, true, false, true]);
+    expect(runs(0)).toEqual([false, true, false, true]);
+  });
+
   it('pauses every window while the player is in the car, until they get out or the sim goes away', () => {
     const sim = lifecycle();
     setup(sim.source);
